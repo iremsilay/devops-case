@@ -4,59 +4,57 @@ import { ObjectId } from "mongodb";
 
 const router = express.Router();
 
-// This section will help you get a list of all the records.
-router.get("/", async (req, res) => {
-  let collection = await db.collection("records");
-  let results = await collection.find({}).toArray();
-  res.send(results).status(200);
-});
+// Express 4 does not automatically forward rejected async route promises.
+const handleAsync = (handler) => (req, res, next) => {
+  Promise.resolve(handler(req, res, next)).catch(next);
+};
 
-// This section will help you get a single record by id
-router.get("/:id", async (req, res) => {
-  let collection = await db.collection("records");
-  let query = {_id: new ObjectId(req.params.id)};
-  let result = await collection.findOne(query);
+router.get("/", handleAsync(async (req, res) => {
+  const results = await db.collection("records").find({}).toArray();
+  res.status(200).json(results);
+}));
 
-  if (!result) res.send("Not found").status(404);
-  else res.send(result).status(200);
-});
+router.get("/:id", handleAsync(async (req, res) => {
+  const result = await db.collection("records").findOne({ _id: new ObjectId(req.params.id) });
+  if (!result) return res.status(404).send("Not found");
+  res.status(200).json(result);
+}));
 
-// This section will help you create a new record.
-router.post("/", async (req, res) => {
-  let newDocument = {
+router.post("/", handleAsync(async (req, res) => {
+  const newDocument = {
     name: req.body.name,
     position: req.body.position,
     level: req.body.level,
   };
-  let collection = await db.collection("records");
-  let result = await collection.insertOne(newDocument);
-  res.send(result).status(204);
-});
+  const result = await db.collection("records").insertOne(newDocument);
+  res.status(200).json(result);
+}));
 
-// This section will help you update a record by id.
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", handleAsync(async (req, res) => {
   const query = { _id: new ObjectId(req.params.id) };
-  const updates =  {
-    $set: {
-      name: req.body.name,
-      position: req.body.position,
-      level: req.body.level
-    }
-  };
+  const updates = { $set: {
+    name: req.body.name,
+    position: req.body.position,
+    level: req.body.level,
+  } };
+  const result = await db.collection("records").updateOne(query, updates);
+  res.status(200).json(result);
+}));
 
-  let collection = await db.collection("records");
-  let result = await collection.updateOne(query, updates);
-  res.send(result).status(200);
-});
+router.delete("/:id", handleAsync(async (req, res) => {
+  const result = await db.collection("records").deleteOne({ _id: new ObjectId(req.params.id) });
+  res.status(200).json(result);
+}));
 
-// This section will help you delete a record
-router.delete("/:id", async (req, res) => {
-  const query = { _id: new ObjectId(req.params.id) };
-
-  const collection = db.collection("records");
-  let result = await collection.deleteOne(query);
-
-  res.send(result).status(200);
+// A database outage must not become an unhandled rejection that kills Node.js.
+router.use((error, req, res, next) => {
+  console.error(`Record API ${req.method} ${req.originalUrl}:`, error);
+  if (res.headersSent) return next(error);
+  if (error?.name === "MongoServerSelectionError" || error?.name === "MongoNetworkError" || error?.name === "MongoTopologyClosedError") {
+    return res.status(503).json({ error: "Database temporarily unavailable" });
+  }
+  // Input validation (F-02) is intentionally not changed by this F-08 patch.
+  res.status(500).json({ error: "Internal server error" });
 });
 
 export default router;
