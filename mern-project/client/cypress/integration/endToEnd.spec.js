@@ -1,5 +1,10 @@
 describe("Web site availability", () => {
+  //after(() => {
+    //cy.contains("Delete").click({ force: true });
+    
+  //});
   after(() => {
+    cy.visit("http://localhost:3000/records");
     cy.contains("Delete").click({ force: true });
   });
   it("Sanity listings web site", () => {
@@ -12,7 +17,9 @@ describe("Web site availability", () => {
     cy.get("#position").type("Position1");
     cy.get("#positionIntern").click({ force: true });
     cy.contains("Create person").click({ force: true });
-    cy.visit("http://localhost:3000");
+    //cy.visit("http://localhost:3000");
+    //cy.contains("Employee1").should("exist");
+    cy.visit("http://localhost:3000/records");
     cy.contains("Employee1").should("exist");
   });
 });
