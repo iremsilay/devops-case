@@ -1,0 +1,11 @@
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: devops-case
+data:
+  MONGO_DB: "github_etl"
+  MONGO_COLLECTION: "repositories"
+  GITHUB_USERNAME: "iremsilay"
+  NODE_ENV: "production"

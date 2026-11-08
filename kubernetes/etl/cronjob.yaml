@@ -1,0 +1,78 @@
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: github-etl
+  namespace: devops-case
+  labels:
+    app: github-etl
+
+spec:
+  schedule: "0 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+
+      template:
+        metadata:
+          labels:
+            app: github-etl
+
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+
+          containers:
+            - name: etl
+              image: case-etl:1.0
+              imagePullPolicy: IfNotPresent
+
+              env:
+                - name: ATLAS_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: etl-mongo-uri
+                      key: ATLAS_URI
+
+                - name: MONGO_DB
+                  valueFrom:
+                    configMapKeyRef:
+                      name: app-config
+                      key: MONGO_DB
+
+                - name: MONGO_COLLECTION
+                  valueFrom:
+                    configMapKeyRef:
+                      name: app-config
+                      key: MONGO_COLLECTION
+
+                - name: GITHUB_USERNAME
+                  valueFrom:
+                    configMapKeyRef:
+                      name: app-config
+                      key: GITHUB_USERNAME
+
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 10001
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "250m"
+                  memory: "256Mi"
