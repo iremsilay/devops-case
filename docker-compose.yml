@@ -1,0 +1,105 @@
+
+name: devops-case
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+
+    volumes:
+      - mongo_data:/data/db
+
+    networks:
+      - case-network
+
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "db.adminCommand('ping')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./mern-project/server
+
+    image: case-backend:1.0
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      ATLAS_URI: ${COMPOSE_MONGO_URI:?COMPOSE_MONGO_URI is required}
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    networks:
+      case-network:
+        aliases:
+          - case-backend
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5050/healthcheck/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./mern-project/client
+
+    image: case-frontend:1.0
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:?FRONTEND_PORT is required}:8080"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    networks:
+      - case-network
+
+  etl:
+    build:
+      context: ./python-project
+
+    image: case-etl:1.0
+
+    profiles:
+      - etl
+
+    environment:
+      ATLAS_URI: ${COMPOSE_MONGO_URI:?COMPOSE_MONGO_URI is required}
+      MONGO_DB: ${MONGO_DB:?MONGO_DB is required}
+      MONGO_COLLECTION: ${MONGO_COLLECTION:?MONGO_COLLECTION is required}
+      GITHUB_USERNAME: ${GITHUB_USERNAME:?GITHUB_USERNAME is required}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    networks:
+      - case-network
+
+    restart: "no"
+
+volumes:
+  mongo_data:
+
+networks:
+  case-network:
+    driver: bridge
