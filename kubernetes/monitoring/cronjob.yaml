@@ -1,0 +1,93 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: monitoring-check
+  namespace: devops-case
+spec:
+  schedule: "* * * * *"
+  timeZone: "Etc/UTC"
+  suspend: false
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+
+      template:
+        spec:
+          serviceAccountName: monitoring-sa
+          automountServiceAccountToken: true
+          restartPolicy: Never
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+
+          containers:
+            - name: monitoring
+              image: case-monitoring:1.1
+              imagePullPolicy: IfNotPresent
+
+              command:
+                - /bin/bash
+                - /opt/monitoring/check-health.sh
+
+              env:
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+
+                - name: BACKEND_DEPLOYMENT
+                  value: "backend"
+
+                - name: ETL_CRONJOB
+                  value: "github-etl"
+
+                - name: ETL_MAX_AGE_SECONDS
+                  value: "4500"
+
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: monitoring-slack-webhook
+                      key: SLACK_WEBHOOK_URL
+
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 48Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+
+              volumeMounts:
+                - name: monitoring-script
+                  mountPath: /opt/monitoring/check-health.sh
+                  subPath: check-health.sh
+                  readOnly: true
+
+                - name: monitoring-script
+                  mountPath: /opt/monitoring/evaluate_etl.py
+                  subPath: evaluate_etl.py
+                  readOnly: true
+
+          volumes:
+            - name: monitoring-script
+              configMap:
+                name: monitoring-script
+                defaultMode: 0444

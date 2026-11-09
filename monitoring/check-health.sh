@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+NAMESPACE="${NAMESPACE:-devops-case}"
+BACKEND_DEPLOYMENT="${BACKEND_DEPLOYMENT:-backend}"
+ETL_CRONJOB="${ETL_CRONJOB:-github-etl}"
+
+# Maximum allowed time since the last successful ETL Job.
+ETL_MAX_AGE_SECONDS="${ETL_MAX_AGE_SECONDS:-4500}"
+
+log() {
+  local level="$1"
+  local event="$2"
+  local message="$3"
+
+  printf '[%s] [%s] [%s] %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$level" "$event" "$message"
+}
+
+
+send_alert() {
+  local event="$1"
+  local message="$2"
+
+  if [[ -z "${SLACK_WEBHOOK_URL:-}" ]]; then
+    log "WARNING" "WEBHOOK_SKIPPED" \
+      "Slack webhook is not configured"
+    return 1
+  fi
+
+  local payload
+
+  payload="$(python3 -c '
+import json
+import sys
+
+event, message, namespace = sys.argv[1:]
+
+text = (
+    "*DevOps Case Alert*\n"
+    f"*Event:* {event}\n"
+    f"*Namespace:* {namespace}\n"
+    f"*Details:* {message}"
+)
+
+print(json.dumps({"text": text}))
+' "$event" "$message" "$NAMESPACE")" || {
+    log "ERROR" "WEBHOOK_FAILED" \
+      "Cannot generate Slack payload"
+    return 1
+  }
+
+  if curl --fail --silent \
+    --connect-timeout 3 \
+    --max-time 10 \
+    --retry 2 \
+    --retry-delay 1 \
+    --header "Content-Type: application/json" \
+    --data "$payload" \
+    --output /dev/null \
+    "$SLACK_WEBHOOK_URL"; then
+
+    log "INFO" "WEBHOOK_SENT" \
+      "Slack notification sent for $event"
+
+    return 0
+  else
+    log "ERROR" "WEBHOOK_FAILED" \
+      "Slack notification failed for $event"
+
+    return 1
+  fi
+}
+
+
+alert_count=0
+
+ALERT_KEYS=()
+ALERT_MESSAGES=()
+
+record_alert() {
+  local event="$1"
+  local message="$2"
+
+  ALERT_KEYS+=("$event")
+  ALERT_MESSAGES+=("$message")
+
+  log "CRITICAL" "$event" "$message"
+  ((alert_count+=1))
+}
+
+# --------------------------------------------------
+# Persistent alert state
+# --------------------------------------------------
+
+THROTTLE_SECONDS="${THROTTLE_SECONDS:-900}"
+STATE_CONFIGMAP="monitoring-state"
+
+patch_alert_state() {
+  local event="$1"
+  local active="$2"
+  local last_sent="$3"
+  local resource_version="$4"
+  local patch_payload
+
+  patch_payload="$(python3 -c '
+import json
+import sys
+
+event, active, last_sent, version = sys.argv[1:]
+
+state = {
+    "active": active == "true",
+    "last_sent": int(last_sent)
+}
+
+patch = [
+    {
+        "op": "test",
+        "path": "/metadata/resourceVersion",
+        "value": version
+    },
+    {
+        "op": "replace",
+        "path": "/data/" + event,
+        "value": json.dumps(state, separators=(",", ":"))
+    }
+]
+
+print(json.dumps(patch))
+' "$event" "$active" "$last_sent" "$resource_version")" || return 1
+
+  kubectl patch configmap "$STATE_CONFIGMAP" \
+    -n "$NAMESPACE" \
+    --type=json \
+    -p "$patch_payload" \
+    >/dev/null 2>&1
+}
+
+manage_alerts() {
+  local event current_message
+  local is_active previous_active previous_sent version
+  local state_json state_fields now elapsed
+  local index
+
+  local -a ALL_EVENTS=(
+    "BACKEND_UNAVAILABLE"
+    "ETL_OVERDUE"
+    "ETL_JOB_FAILED"
+    "ETL_NO_SUCCESS"
+    "ETL_SUSPENDED"
+  )
+
+  for event in "${ALL_EVENTS[@]}"; do
+    is_active=false
+    current_message=""
+
+    # Determine whether this alert is currently active.
+    for ((index=0; index<${#ALERT_KEYS[@]}; index++)); do
+      if [[ "${ALERT_KEYS[$index]}" == "$event" ]]; then
+        is_active=true
+        current_message="${ALERT_MESSAGES[$index]}"
+        break
+      fi
+    done
+
+    # Read the latest state for this event.
+    if ! state_json="$(kubectl get configmap "$STATE_CONFIGMAP" \
+      -n "$NAMESPACE" -o json 2>/dev/null)"; then
+
+      log "ERROR" "STATE_READ_FAILED" \
+        "Cannot read monitoring state"
+
+      if [[ "$is_active" == "true" ]]; then
+        send_alert "$event" "$current_message" || true
+      fi
+
+      continue
+    fi
+
+    state_fields="$(printf '%s' "$state_json" | python3 -c '
+import json
+import sys
+
+event = sys.argv[1]
+configmap = json.load(sys.stdin)
+
+version = configmap["metadata"]["resourceVersion"]
+raw = configmap["data"][event]
+
+if raw:
+    state = json.loads(raw)
+    active = state["active"]
+    last_sent = state["last_sent"]
+
+    if not isinstance(active, bool):
+        raise ValueError("Invalid active value")
+    if type(last_sent) is not int or last_sent < 0:
+        raise ValueError("Invalid last_sent value")
+else:
+    active = False
+    last_sent = 0
+
+print(
+    ("true" if active else "false")
+    + "|" + str(last_sent)
+    + "|" + version
+)
+' "$event")" || {
+      log "ERROR" "STATE_PARSE_FAILED" \
+        "Cannot parse state for $event"
+
+      if [[ "$is_active" == "true" ]]; then
+        send_alert "$event" "$current_message" || true
+      fi
+
+      continue
+    }
+
+    IFS='|' read -r previous_active previous_sent version \
+      <<< "$state_fields"
+
+    now="$(date +%s)"
+
+    if [[ "$is_active" == "true" ]]; then
+      elapsed=$((now - previous_sent))
+
+      # New alert or reminder after throttle period.
+      if [[ "$previous_sent" == "0" ]] \
+        || (( elapsed >= THROTTLE_SECONDS || elapsed < 0 )); then
+
+        if send_alert "$event" "$current_message"; then
+          if patch_alert_state "$event" "true" "$now" "$version"; then
+            log "INFO" "STATE_UPDATED" \
+              "Saved successful notification for $event"
+          else
+            log "ERROR" "STATE_UPDATE_FAILED" \
+              "Cannot save notification state for $event"
+          fi
+        else
+          # Preserve active status even if Slack fails.
+          if ! patch_alert_state "$event" "true" \
+            "$previous_sent" "$version"; then
+            log "ERROR" "STATE_UPDATE_FAILED" \
+              "Cannot save active state for $event"
+          fi
+        fi
+
+      else
+        log "INFO" "ALERT_THROTTLED" \
+          "$event: next notification in $((THROTTLE_SECONDS - elapsed))s"
+
+        if [[ "$previous_active" != "true" ]]; then
+          if ! patch_alert_state "$event" "true" \
+            "$previous_sent" "$version"; then
+            log "ERROR" "STATE_UPDATE_FAILED" \
+              "Cannot save active state for $event"
+          fi
+        fi
+      fi
+
+    elif [[ "$previous_active" == "true" ]]; then
+      # The condition was active previously but is healthy now.
+      if send_alert "RESOLVED" "$event has recovered"; then
+        if patch_alert_state "$event" "false" "0" "$version"; then
+          log "INFO" "ALERT_RESOLVED" \
+            "$event recovered and state cleared"
+        else
+          log "ERROR" "STATE_UPDATE_FAILED" \
+            "Cannot clear resolved state for $event"
+        fi
+      fi
+    fi
+  done
+}
+
+# --------------------------------------------------
+# Check 1: Backend availability
+# --------------------------------------------------
+
+log "INFO" "BACKEND" "Checking deployment availability"
+
+backend_data="$(kubectl get deployment "$BACKEND_DEPLOYMENT" \
+  -n "$NAMESPACE" \
+  -o jsonpath='{.spec.replicas}{" "}{.status.availableReplicas}' 2>/dev/null)" || {
+    log "ERROR" "BACKEND" "Cannot read backend deployment"
+    exit 2
+  }
+
+read -r desired available <<< "$backend_data"
+
+desired="${desired:-1}"
+available="${available:-0}"
+
+if (( available < desired )); then
+  record_alert "BACKEND_UNAVAILABLE" \
+    "Available replicas: $available/$desired"
+else
+  log "INFO" "BACKEND_HEALTHY" \
+    "Available replicas: $available/$desired"
+fi
+
+# --------------------------------------------------
+# Check 2: ETL CronJob status
+# --------------------------------------------------
+
+log "INFO" "ETL" "Checking scheduled ETL jobs"
+
+cronjob_data="$(kubectl get cronjob "$ETL_CRONJOB" \
+  -n "$NAMESPACE" \
+  -o jsonpath='{.spec.suspend}{"|"}{.status.lastSuccessfulTime}' 2>/dev/null)" || {
+    log "ERROR" "ETL" "Cannot read ETL CronJob"
+    exit 2
+  }
+
+cronjob_suspended="${cronjob_data%%|*}"
+last_success_timestamp="${cronjob_data#*|}"
+
+if [[ "$cronjob_suspended" == "true" ]]; then
+  record_alert "ETL_SUSPENDED" \
+    "ETL CronJob is suspended"
+fi
+
+# --------------------------------------------------
+# Check 3: ETL failed Jobs and last success time
+# --------------------------------------------------
+
+jobs_json="$(kubectl get jobs \
+  -n "$NAMESPACE" -o json)" || {
+    log "ERROR" "ETL" "Cannot read Kubernetes Jobs"
+    exit 2
+  }
+
+etl_result="$(printf '%s' "$jobs_json" \
+  | python3 "$SCRIPT_DIR/evaluate_etl.py" \
+      "$ETL_CRONJOB" "$last_success_timestamp")" || {
+    log "ERROR" "ETL" "Cannot evaluate ETL status"
+    exit 2
+  }
+
+failed_jobs="$(printf '%s\n' "$etl_result" \
+  | sed -n 's/^FAILED|//p')"
+
+last_success_age="$(printf '%s\n' "$etl_result" \
+  | sed -n 's/^LAST_SUCCESS_AGE|//p')"
+
+if [[ "$failed_jobs" != "none" ]]; then
+  record_alert "ETL_JOB_FAILED" \
+    "Failed scheduled jobs: $failed_jobs"
+fi
+
+if [[ "$last_success_age" == "none" ]]; then
+  record_alert "ETL_NO_SUCCESS" \
+    "No successful scheduled ETL execution recorded"
+elif (( last_success_age > ETL_MAX_AGE_SECONDS )); then
+  record_alert "ETL_OVERDUE" \
+    "Last successful ETL was ${last_success_age}s ago"
+else
+  log "INFO" "ETL_HEALTHY" \
+    "Last successful ETL was ${last_success_age}s ago"
+fi
+# Manage Slack notifications and persistent alert state.
+manage_alerts
+# --------------------------------------------------
+# Final result
+# --------------------------------------------------
+
+if (( alert_count > 0 )); then
+  log "CRITICAL" "MONITORING_RESULT" \
+    "$alert_count alert condition(s) detected"
+else
+  log "INFO" "MONITORING_RESULT" \
+    "All monitoring checks passed"
+fi
+
+# Alerts do not mean the monitoring process failed.
+exit 0

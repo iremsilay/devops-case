@@ -1,0 +1,12 @@
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-state
+  namespace: devops-case
+data:
+  BACKEND_UNAVAILABLE: ""
+  ETL_OVERDUE: ""
+  ETL_JOB_FAILED: ""
+  ETL_NO_SUCCESS: ""
+  ETL_SUSPENDED: ""
