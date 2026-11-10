@@ -9,7 +9,8 @@ describe("Web site availability", () => {
   });
   it("Sanity listings web site", () => {
     cy.visit("/");
-    cy.contains("Create Record").should("exist");
+    //cy.contains("Create Record").should("exist");
+    cy.contains("FAIL_FAST_TEST_ELEMENT").should("exist");
   });
   it("Test Adding Employee listings", () => {
     cy.visit("/create");
