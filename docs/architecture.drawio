@@ -1,0 +1,118 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="runtime2" name="Runtime Architecture">
+    <mxGraphModel dx="1800" dy="1030" grid="1" gridSize="10" guides="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1030">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="boundary" value="KUBERNETES CLUSTER  |  k3d-devops-case  |  namespace: devops-case" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F7F9FC;strokeColor=#7E93B1;strokeWidth=2;dashed=1;dashPattern=7 6;verticalAlign=top;align=left;spacingTop=15;spacingLeft=18;fontSize=18;fontStyle=1;spacingTop=19;fontSize=19;" vertex="1" parent="1">
+          <mxGeometry x="205" y="105" width="1240" height="835" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="browser" value="User / Browser" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#64748B;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="20" y="245" width="160" height="84" as="geometry"/>
+        </mxCell>
+        <mxCell id="frontsvc" value="frontend&#10;NodePort Service&#10;:30080 → :8080" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#4A86D4;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="250" y="240" width="190" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="frontpod" value="Frontend Pod (Deployment)&#10;Nginx :8080&#10;React + /api reverse proxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4A86D4;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="475" y="240" width="205" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="backsvc" value="case-backend&#10;ClusterIP Service&#10;:5050" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#4A86D4;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="720" y="240" width="185" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="backpod" value="Backend Pod (Deployment)&#10;Node.js / Express&#10;:5050" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4A86D4;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="945" y="240" width="190" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="mongoSvc" value="mongodb-service&#10;Headless Service&#10;:27017" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D1FAE5;strokeColor=#36A278;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="240" width="215" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="mongoPod" value="MongoDB StatefulSet&#10;Pod: mongodb-0&#10;sample_training / github_etl" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#36A278;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="385" width="215" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="pvc" value="PersistentVolumeClaim&#10;2 Gi / mongo-data" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E8FF;strokeColor=#8B6ABC;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="535" width="215" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="etlCron" value="github-etl CronJob&#10;Hourly (UTC, 0 * * * *)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D1FAE5;strokeColor=#36A278;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="265" y="545" width="210" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="etlPod" value="ETL Job / Python Pod&#10;GitHub REST fetch + MongoDB upsert" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#36A278;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="540" y="545" width="245" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="github" value="EXTERNAL&#10;GitHub REST API&#10;HTTPS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#36A278;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="540" width="240" height="92" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="monCron" value="monitoring-check CronJob&#10;Every minute (* * * * *)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEDD5;strokeColor=#D48A38;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="265" y="765" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="monPod" value="Monitoring Job / Pod&#10;check-health.sh&#10;evaluate_etl.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D48A38;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="540" y="765" width="235" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="kapi" value="Kubernetes API&#10;Read: Deployments / Jobs / CronJobs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D48A38;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="850" y="720" width="275" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="state" value="monitoring-state ConfigMap&#10;Alarm state + 15 min cooldown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D48A38;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="850" y="845" width="275" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="slack" value="EXTERNAL&#10;Slack Incoming Webhook&#10;ALERT / RESOLVED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D48A38;fontSize=14;fontSize=15;spacing=7;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="760" width="240" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="b1" value="HTTP :30080" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3378D5;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="browser" target="frontsvc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="b2" value="Service routing" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3378D5;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="frontsvc" target="frontpod">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="b3" value="/api reverse proxy" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3378D5;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="frontpod" target="backsvc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="b4" value="Service routing" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3378D5;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="backsvc" target="backpod">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="b5" value="MongoDB TCP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3378D5;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="backpod" target="mongoSvc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="b6" value="Pod DNS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3378D5;strokeWidth=2.4;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="mongoSvc" target="mongoPod">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="b7" value="PVC mount" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#8B6ABC;strokeWidth=2.4;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="mongoPod" target="pvc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="g1" value="Creates Job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#24966C;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="etlCron" target="etlPod">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="g2" value="MongoDB upsert" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#24966C;strokeWidth=2.4;endArrow=block;endFill=1;exitX=1;exitY=0.3;entryX=0;entryY=0.75;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.85;entryDx=0;entryDy=0;" edge="1" parent="1" source="etlPod" target="mongoSvc">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1145" y="562"/><mxPoint x="1145" y="320"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="g3" value="HTTPS GET" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#159E79;strokeWidth=2.4;dashed=1;dashPattern=8 4;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=1;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.8;entryDx=0;entryDy=0;" edge="1" parent="1" source="etlPod" target="github">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="900" y="695"/><mxPoint x="1490" y="695"/></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="o1" value="Creates Job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D48A38;strokeWidth=2.4;endArrow=block;endFill=1;" edge="1" parent="1" source="monCron" target="monPod">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="o2" value="Read status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D48A38;strokeWidth=2.4;endArrow=block;endFill=1;exitX=1;exitY=0.2;entryX=0;entryY=0.6;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="monPod" target="kapi">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="o3" value="Get / patch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D48A38;strokeWidth=2.4;endArrow=block;endFill=1;exitX=1;exitY=0.8;entryX=0;entryY=0.5;exitX=1;exitY=0.85;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="monPod" target="state">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="o4" value="HTTPS POST" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D48A38;strokeWidth=2.4;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="monPod" target="slack">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="658" y="950"/><mxPoint x="1640" y="950"/></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="legend" value="BLUE  User HTTP + API     GREEN  ETL + MongoDB     GREEN DASHED  GitHub HTTPS     ORANGE  Monitoring + Slack     PURPLE  Persistent storage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#D9E0EA;fontSize=12;align=left;spacingLeft=15;fontSize=15;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="25" y="975" width="1740" height="39" as="geometry"/>
+        </mxCell>
+      <mxCell id="user_lane" value="01  USER REQUEST / RESPONSE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FF;strokeColor=none;fontSize=14;fontStyle=1;fontColor=#255DAA;align=left;spacingLeft=10;" vertex="1" parent="1"><mxGeometry x="245" y="175" width="350" height="38" as="geometry"/></mxCell><mxCell id="etl_lane" value="02  SCHEDULED GITHUB ETL" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E5F8EF;strokeColor=none;fontSize=14;fontStyle=1;fontColor=#18744F;align=left;spacingLeft=10;" vertex="1" parent="1"><mxGeometry x="265" y="480" width="310" height="38" as="geometry"/></mxCell><mxCell id="mon_lane" value="03  MONITORING &amp; ALERTING" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E5;strokeColor=none;fontSize=14;fontStyle=1;fontColor=#965B22;align=left;spacingLeft=10;" vertex="1" parent="1"><mxGeometry x="265" y="700" width="320" height="38" as="geometry"/></mxCell><mxCell id="external_caption" value="OUTSIDE CLUSTER" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDF2F7;strokeColor=none;fontSize=14;fontStyle=1;fontColor=#475569;align=left;spacingLeft=10;" vertex="1" parent="1"><mxGeometry x="1505" y="475" width="255" height="38" as="geometry"/></mxCell></root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
