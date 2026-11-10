@@ -446,26 +446,143 @@ Altı test; eski ve yeni ETL başarısızlıklarını ayırma, recovery, başar�
 
 İlk npm audit testlerinde backend 11 ve frontend 89 güvenlik açığı raporlanmıştı. İyileştirmeler sonrası yapılan yerel kontrolde backend 0, frontend 33 açık kalmıştı. Bu sayılar tarihsel ölçümlerdir; güncel durum için audit yeniden çalıştırılmalıdır. Frontend üretim container'ı Node.js build bağımlılıklarını taşımayan Nginx image'ı kullanır; buna rağmen build-time/supply-chain riskleri tamamen yok olmaz.
 
+### 9.6 Container Image Security Scanning ve SBOM (Advanced 5)
+
+CI pipeline'ına Trivy tabanlı container image güvenlik taraması ve CycloneDX formatında SBOM (Software Bill of Materials) üretimi eklenmiştir.
+
+**Uygulanan kontroller:**
+
+- Backend, frontend ve Python ETL için ayrı güvenlik job'ları.
+- Her bileşenin Docker image'ının CI ortamında oluşturulması.
+- Trivy ile HIGH ve CRITICAL seviyesindeki bilinen güvenlik açıklarının taranması.
+- Her image için CycloneDX JSON formatında SBOM üretilmesi.
+- Tarama raporlarının ve SBOM dosyalarının GitHub Actions artifact olarak saklanması.
+
+**CI job'ları:**
+
+- `Security - backend`
+- `Security - frontend`
+- `Security - etl`
+
+**Üretilen artifact'lar:**
+
+| Artifact | İçerik |
+| --- | --- |
+| `security-backend` | `trivy-backend.json`, `sbom-backend.json` |
+| `security-frontend` | `trivy-frontend.json`, `sbom-frontend.json` |
+| `security-etl` | `trivy-etl.json`, `sbom-etl.json` |
+
+Artifact saklama süresi 14 gündür.
+
+**Doğrulama:**
+
+10 Kasım 2026 tarihinde çalıştırılan GitHub Actions workflow'unda üç Security job'ı başarıyla tamamlanmış, vulnerability scanning ve SBOM üretimi doğrulanmıştır.
+
+Başarılı workflow: [GitHub Actions Run #13](https://github.com/iremsilay/devops-case/actions/runs/42861106121)
+
+**Bilinen sınırlamalar:**
+
+- Güvenlik taraması raporlama amaçlıdır. Bulunan açıklar CI çalışmasını otomatik olarak başarısız yapmaz (`exit-code: '0'`).
+- Tarama, GHCR'ye yayımlanan image digest'i yerine CI ortamında yeniden oluşturulan image üzerinde gerçekleştirilir.
+- Güvenlik açıklarının tamamı giderilmemiştir.
+- SBOM üretilmesi, image'ın güvenlik açıklarından arındırılmış olduğu anlamına gelmez.
+- Image signing, policy as code ve otomatik güvenlik politikasıyla yayın engelleme uygulanmamıştır.
+
+**Kanıtlar:**
+
+- [43 - Başarılı Security job'ları](docs/screenshots/43-security-jobs-success.png)
+- [44 - Trivy taraması ve SBOM üretimi](docs/screenshots/44-security-trivy-scan.png)
+- [45 - Güvenlik raporları ve SBOM artifact'ları](docs/screenshots/45-security-artifacts.png)
+
 ## 10. CI/CD VE RELEASE YÖNETİMİ
 
-`.github/workflows/ci.yml`; main branch push, main branch pull request ve workflow_dispatch ile tetiklenir.
+CI/CD süreci, GitHub Actions ile otomatik doğrulama ve Docker image yayınlama, yerel Kubernetes cluster'ında ise kontrollü deployment yaklaşımıyla yönetilir.
+
+### 10.1. CI Pipeline
+
+`.github/workflows/ci.yml` dosyasında tanımlanan pipeline aşağıdaki olaylarla tetiklenir:
+
+- `main` branch'ine push
+- `main` branch'ine pull request
+- `workflow_dispatch` ile manuel çalıştırma
 
 **Pipeline aşamaları:**
 
-1. Backend: npm ci, production npm audit, Node.js syntax doğrulaması.
-2. Frontend: npm ci ve CI=true ile React production build.
-3. Python ETL: requirements kurulumu, py_compile, requests ve pymongo import kontrolü.
-4. Cypress: Docker ile MongoDB/backend/frontend başlatma ve E2E testleri. Cypress E2E testleri hedef Kubernetes cluster'ında değil, GitHub Actions runner'ı üzerinde oluşturulan geçici ve izole bir Docker ortamında çalıştırılır.
+1. **Backend:** `npm ci`, production `npm audit` ve Node.js syntax doğrulaması.
+2. **Frontend:** `npm ci` ve `CI=true` ile React production build.
+3. **Python ETL:** Requirements kurulumu, `py_compile`, `requests` ve `pymongo` import kontrolü.
+4. **Cypress:** Docker ile MongoDB, backend ve frontend servislerini başlatma ve E2E testleri.
+5. **Docker:** Önceki doğrulamalar başarılıysa backend, frontend ve ETL image'larını `linux/amd64` ve `linux/arm64` mimarileri için build etme. `main` branch'ine yapılan push işlemlerinde image'ları GHCR'ye yayınlama.
 
-Pipeline, `docker network create` komutuyla ayrı bir `case-ci` ağı oluşturur. MongoDB, backend ve frontend container'ları bu ağ içinde başlatılır. Backend readiness kontrolü ve frontend üzerinden API erişimi doğrulandıktan sonra Cypress testleri çalıştırılır.
+#### Cypress Test Ortamı
 
-Bu yaklaşım testlerin hedef Kubernetes cluster'ındaki mevcut verileri ve çalışan servisleri etkilemesini önler. Ayrıca her CI çalışmasında bağımsız bir test ortamı kullanılmasını sağlar.
+Cypress E2E testleri hedef Kubernetes cluster'ında değil, GitHub Actions runner'ı üzerinde oluşturulan geçici ve izole bir Docker ortamında çalıştırılır.
+
+Pipeline, `docker network create` komutuyla ayrı bir `case-ci` ağı oluşturur. MongoDB, backend ve frontend container'ları bu ağ içinde başlatılır.
+
+Backend readiness kontrolü ve frontend üzerinden API erişimi doğrulandıktan sonra Cypress testleri çalıştırılır.
+
+Bu yaklaşım, testlerin hedef Kubernetes cluster'ındaki mevcut verileri ve çalışan servisleri etkilemesini önler. Ayrıca her CI çalışmasında bağımsız bir test ortamı kullanılmasını sağlar.
 
 Testler başarısız olduğunda ilgili container logları ve varsa Cypress ekran görüntüleri inceleme için saklanır.
 
 Bu aşama uygulamanın container ortamındaki E2E davranışını doğrular. Kubernetes deployment ve orkestrasyon davranışlarının tamamını test ettiği anlamına gelmez.
 
-5. Docker: Önceki kontroller başarılıysa backend, frontend ve ETL image'larını linux/amd64 ve linux/arm64 için build etme. main branch push'larında GHCR'ye yayınlama.
+#### Fail-Fast ve Job Bağımlılıkları
+
+Docker aşaması `backend`, `frontend`, `etl` ve `cypress` job'larına bağımlıdır.
+
+Bu job'lardan herhangi biri başarısız olursa Docker aşaması başlatılmaz. Böylece başarısız doğrulamalardan sonra yeni image yayınlanması engellenir.
+
+Pull request kontrollerinde Docker image'ları build edilir ancak GHCR'ye push edilmez.
+
+#### Fail-Fast Test Kanıtları
+
+Fail-fast davranışı, `test/ci-fail-fast` branch'inden `main` branch'ine açılan geçici Pull Request #1 üzerinde test edilmiştir.
+
+- **Pull Request:** [#1 — CI fail-fast testi](https://github.com/iremsilay/devops-case/pull/1)
+- **Test commit'i:** `4cd5e7d`
+- **Yöntem:** Cypress testine kasıtlı olarak başarısız olacak `FAIL_FAST_TEST_ELEMENT` assertion'ı eklenmiştir.
+- **Cypress E2E:** Failure
+- **Docker build/publish:** Skipped
+- **Diğer kontroller:** Backend validation, Frontend build ve Python ETL validation başarılıdır.
+
+**Pull Request kontrol sonuçları:**
+
+![Fail-fast testinde başarısız Cypress ve atlanan Docker job'ı](docs/screenshots/22-cicd-fail-fast.png)
+
+**Cypress hata logu:**
+
+![Kasıtlı Cypress assertion hatası](docs/screenshots/23-cicd-fail-fast-log.png)
+
+Bu test, Cypress doğrulaması başarısız olduğunda Docker job'ının başlatılmadığını göstermektedir. Böylece başarısız test sonucunda yeni Docker image'larının GHCR'ye yayınlanması engellenmiştir.
+
+Test yalnızca geçici branch üzerinde gerçekleştirilmiştir. Değişiklikler `main` branch'ine dahil edilmemiştir.
+
+### 10.2. CI Pipeline Çalışma Kanıtları
+
+GitHub Actions üzerinde `main` branch'ine yapılan push sonrasında `CI - MERN and ETL` workflow'u başarıyla tamamlanmıştır.
+
+- **Workflow:** CI - MERN and ETL (#9)
+- **Commit:** `b5873c8`
+- **Sonuç:** Success
+- **Süre:** 3 dakika 11 saniye
+
+Backend validation, Frontend build, Python ETL validation, Cypress E2E ve üç Docker build job'ının tamamı başarılıdır.
+
+**GitHub Actions pipeline geçmişi:**
+
+![Başarılı CI pipeline](docs/screenshots/12-cicd-pipeline-success.png)
+
+**Pipeline job sonuçları:**
+
+![Başarılı CI doğrulama ve Docker build job'ları](docs/screenshots/13-cicd-jobs-success.png)
+
+Bu görüntüler, belirtilen commit için CI doğrulamalarının ve Docker build aşamalarının başarıyla tamamlandığını gösterir.
+
+### 10.3. GHCR Image Yayınlama
+
+CI doğrulamaları başarılı olduğunda backend, frontend ve ETL için Docker image'ları oluşturulur.
 
 **GHCR image adları:**
 
@@ -473,11 +590,32 @@ Bu aşama uygulamanın container ortamındaki E2E davranışını doğrular. Kub
 - `ghcr.io/iremsilay/devops-case-frontend`
 - `ghcr.io/iremsilay/devops-case-etl`
 
-Image tag'leri: latest ve sha-<40-karakterlik-commit-hash>.
+Image'lar iki farklı tag ile sürümlenir:
 
-Docker aşaması backend, frontend, etl ve cypress job'larına bağımlıdır. Bu dört job'dan biri başarısızsa Docker publish aşaması başlamaz. Pull request kontrolünde image build yapılır, ancak registry'ye push yapılmaz.
+- `latest`: En son yayınlanan sürüm.
+- `sha-<40-karakterlik-commit-hash>`: Belirli bir Git commit'ine ait sürüm.
 
-Deployment'ın GitHub Actions tarafından doğrudan yapılmaması bilinçli bir yerel cluster izolasyonu kararıdır. Cluster'ı GitHub-hosted runner'a açık hale getirmek yerine image yayınlama ve cluster release adımları ayrılmıştır. Bu bir GitOps uygulaması değildir; tam otomatik CD olarak tanımlanmamalıdır.
+SHA tabanlı sürümleme, deployment sırasında belirli bir image sürümünün seçilmesini ve CI çalışmasıyla ilişkilendirilmesini sağlar.
+
+#### GHCR Yayınlama Kanıtları
+
+Backend, frontend ve ETL paketlerinin GHCR üzerinde yayınlandığı doğrulanmıştır.
+
+![GHCR üzerinde yayınlanan Docker image'ları](docs/screenshots/20-cicd-ghcr-images.png)
+
+Backend image'ının `latest` ve `sha-b5873c8b85f31885109fb038f517e18f06601448` tag'leriyle yayınlandığı doğrulanmıştır.
+
+Bu SHA tag'i, başarılı CI workflow'unun commit'iyle eşleşmektedir.
+
+![GHCR backend image sürüm detayları](docs/screenshots/21-cicd-ghcr-image-tags.png)
+
+### 10.4. Kubernetes Deployment
+
+Deployment'ın GitHub Actions tarafından doğrudan yapılmaması bilinçli bir yerel cluster izolasyonu kararıdır.
+
+GitHub-hosted runner'ın yerel Kubernetes cluster'ına erişimi bulunmadığından, cluster'ı dış erişime açmak yerine image yayınlama ve deployment adımları ayrılmıştır.
+
+Bu yaklaşım tam otomatik CD veya GitOps olarak tanımlanmaz. CI ve image yayınlama otomatik, yerel cluster'a sürüm geçişi ise manuel olarak tetiklenir.
 
 **Yerel cluster'a yayınlanmış bir SHA image sürümünü geçirmek için:**
 
@@ -485,19 +623,108 @@ Deployment'ın GitHub Actions tarafından doğrudan yapılmaması bilinçli bir 
 ./scripts/deploy-local.sh sha-<40-karakterlik-git-commit-hash>
 ```
 
-deploy-local.sh script'i yalnızca `k3d-devops-case` Kubernetes context'inde çalışır ve image etiketi olarak 40 karakterlik Git commit SHA'sını içeren `sha-<commit-hash>` biçimini kabul eder.
+`deploy-local.sh` script'i yalnızca `k3d-devops-case` Kubernetes context'inde çalışır ve image etiketi olarak 40 karakterlik Git commit SHA'sını içeren `sha-<commit-hash>` biçimini kabul eder.
 
-Script önce backend Deployment, frontend Deployment ve ETL CronJob kaynaklarının mevcut image referanslarını kaydeder.
+Script'in deployment akışı:
 
-Ardından `kubectl set image` komutlarıyla backend ve frontend image'larını sırayla GHCR'deki yeni sürümlerle günceller. Her Deployment için `kubectl rollout status` --timeout=180s komutuyla rollout sonucunu kontrol eder. Bu adımlar başarılı olursa ETL CronJob image'ı güncellenir.
+1. Backend Deployment, frontend Deployment ve ETL CronJob kaynaklarının mevcut image referanslarını kaydeder.
+2. `kubectl set image` ile backend image'ını yeni sürüme günceller.
+3. `kubectl rollout status --timeout=180s` ile backend rollout sonucunu kontrol eder.
+4. Backend başarılıysa frontend image'ını günceller ve rollout sonucunu kontrol eder.
+5. Her iki Deployment başarılıysa ETL CronJob image'ını günceller.
 
-Herhangi bir komut başarısız olduğunda Bash ERR trap mekanizması rollback fonksiyonunu çalıştırır. Bu fonksiyon, deployment öncesinde kaydedilen eski image referanslarını `kubectl set image` ile backend, frontend ve ETL kaynaklarına yeniden uygular. Ardından backend ve frontend rollout durumlarını tekrar kontrol eder.
+Bu sıra, başarısız bir backend rollout sonrasında frontend ve ETL kaynaklarının yeni sürüme geçirilmesini önler.
 
-Rollback sırasında komutlar başarısız olursa script uyarı verir ve manuel inceleme gerekir. Bu nedenle rollback mekanizması kontrollü bir geri dönüş sağlar ancak her koşulda otomatik iyileşmeyi garanti etmez.
+#### Kubernetes Deployment Çalışma Kanıtları
 
-ETL CronJob image'ının güncellenmesi, yeni ETL sürümünün başarılı çalıştığını tek başına kanıtlamaz. Bunun için sonraki ETL Job sonucu ayrıca doğrulanmalıdır..
+Yerel `k3d-devops-case` Kubernetes cluster'ında, GHCR üzerinde yayınlanmış yeni bir SHA sürümüne kontrollü deployment gerçekleştirilmiştir.
 
-Script manuel bir sürüm değiştirme işlemidir; belirtilen SHA tag'lerinin GHCR'de bulunması ve cluster tarafından çekilebilir olması gerekir. Image pull kimlik doğrulaması gerekiyorsa uygun Kubernetes imagePullSecret ayrıca yapılandırılmalıdır.
+**Deployment bilgileri:**
+
+- **Namespace:** `devops-case`
+- **Önceki sürüm:** `sha-92683629ca434accfb946cb255ad97eb0e4f4bc5`
+- **Yeni sürüm:** `sha-b5873c8b85f31885109fb038f517e18f06601448`
+- **Deployment yöntemi:** `scripts/deploy-local.sh`
+- **Sonuç:** Başarılı
+
+**Deployment öncesi durum:**
+
+Backend, frontend ve ETL kaynakları önceki SHA sürümünü kullanmaktadır. Backend ve frontend Deployment kaynakları `1/1 Ready` durumundadır.
+
+![Deployment öncesi Kubernetes durumu](docs/screenshots/24-cd-before-deployment.png)
+
+**Deployment işlemi:**
+
+Aşağıdaki komut ile yeni sürüm uygulanmıştır:
+
+```bash
+./scripts/deploy-local.sh sha-b5873c8b85f31885109fb038f517e18f06601448
+```
+
+Script çıktısında backend ve frontend için `successfully rolled out`, ETL CronJob için `image updated` ve işlem sonunda `Deployment completed successfully.` mesajları görülmüştür.
+
+![Başarılı Kubernetes deployment işlemi](docs/screenshots/25-cd-deployment-success.png)
+
+**Deployment sonrası doğrulama:**
+
+Deployment sonrasında backend, frontend ve ETL image referanslarının yeni SHA sürümüne geçtiği doğrulanmıştır.
+
+Backend ve frontend Deployment kaynakları `1/1 Ready`, ilgili pod'lar ise `Running` durumundadır.
+
+![Deployment sonrası image ve pod doğrulaması](docs/screenshots/26-cd-rollout-success.png)
+
+Bu test, GHCR üzerinde yayınlanan belirli bir commit sürümünün yerel Kubernetes cluster'ına uygulanabildiğini ve backend/frontend rollout işlemlerinin başarıyla tamamlandığını göstermektedir.
+
+### 10.5. Rollback Mekanizması
+
+Deployment sırasında herhangi bir komut başarısız olduğunda Bash `ERR` trap mekanizması rollback fonksiyonunu çalıştırır.
+
+Rollback fonksiyonu:
+
+1. Deployment öncesinde kaydedilen backend, frontend ve ETL image referanslarını kullanır.
+2. `kubectl set image` komutlarıyla eski image referanslarını ilgili Kubernetes kaynaklarına yeniden uygular.
+3. Backend ve frontend Deployment kaynaklarının rollout durumlarını tekrar kontrol eder.
+4. Rollback sırasında hata oluşursa uyarı verir ve manuel inceleme gerektirir.
+
+Bu mekanizma, başarısız deployment sonrasında önceki image sürümlerine kontrollü dönüş sağlamayı amaçlar. Ancak image erişimi, cluster sağlığı veya başka altyapı sorunları nedeniyle her koşulda otomatik iyileşme garanti edilmez.
+
+#### Rollback Test Kanıtları
+
+Rollback mekanizması, yerel `k3d-devops-case` Kubernetes cluster'ında kasıtlı olarak başarısız bir deployment oluşturularak test edilmiştir.
+
+- **Sağlıklı sürüm:** `sha-b5873c8b85f31885109fb038f517e18f06601448`
+- **Hatalı test sürümü:** `sha-0000000000000000000000000000000000000000`
+- **Test yöntemi:** GHCR'de bulunmayan bir image tag'iyle deployment başlatılması.
+- **Hata:** Backend rollout işlemi zaman aşımına uğramıştır.
+- **Rollback:** Script otomatik olarak geri dönüş fonksiyonunu çalıştırmıştır.
+
+**Rollback'i tetikleyen komut:**
+
+```bash
+./scripts/deploy-local.sh sha-0000000000000000000000000000000000000000
+```
+
+Script çıktısında `error: timed out waiting for the condition` hatasının ardından `Deployment failed. Starting rollback...` mesajı görülmüştür.
+
+Backend ve frontend rollout kontrolleri başarılı olmuş ve script `Rollback completed.` mesajıyla geri dönüş işlemini tamamlamıştır.
+
+![Başarısız deployment ve rollback işlemi](docs/screenshots/27-cd-rollback-trigger.png)
+
+**Rollback sonrası Kubernetes doğrulaması:**
+
+![Rollback sonrası image ve pod durumları](docs/screenshots/28-cd-rollback-success.png)
+
+Bu test, hatalı deployment durumunda rollback mekanizmasının tetiklendiğini ve önceki image referanslarına geri dönüş işleminin gerçekleştirildiğini göstermektedir.
+
+### 10.6. Sınırlamalar ve Doğrulama
+
+- **Manuel CD:** Kubernetes deployment işlemi GitHub Actions tarafından otomatik olarak tetiklenmez.
+- **Image erişimi:** Belirtilen SHA tag'lerinin GHCR üzerinde bulunması ve Kubernetes cluster'ı tarafından çekilebilir olması gerekir. Kimlik doğrulaması gerekiyorsa uygun `imagePullSecret` yapılandırılmalıdır.
+- **ETL doğrulaması:** ETL CronJob image'ının güncellenmesi, yeni ETL sürümünün başarılı çalıştığını tek başına kanıtlamaz. Bunun için sonraki ETL Job sonucu ayrıca kontrol edilmelidir.
+- **Rollback:** Script önceki image referanslarını geri yüklemeyi dener. Rollback başarısı, Kubernetes rollout sonuçlarıyla ayrıca doğrulanmalıdır.
+- **CI kapsamı:** Cypress testleri izole Docker ortamında çalışır; hedef Kubernetes cluster'ının tüm deployment davranışlarını doğrulamaz.
+
+Başarılı CI pipeline ve GHCR image yayınlama sonuçları ekran görüntüleriyle belgelenmiştir. Fail-fast, Kubernetes deployment ve rollback davranışlarının çalışma kanıtları ayrı testlerle doğrulanacaktır.
 
 ## 11. MONITORING, LOGLAMA VE SLACK UYARILARI
 
@@ -541,33 +768,240 @@ Backend ve ETL hata, throttling, yeniden bildirim ve RESOLVED senaryoları yerel
 
 ## 12. MONGODB BACKUP VE RESTORE
 
-MongoDB sample_training ve github_etl veritabanları için `scripts/backup.sh` ve `scripts/restore.sh` kullanılır. Komutlar Kubernetes devops-case namespace'inde `mongodb-0` Pod'uyla çalışır. Bu scriptler Docker Compose MongoDB container'ına yönelik değildir.
+MongoDB `sample_training` ve `github_etl` veritabanlarının yedeklenmesi ve geri yüklenmesi için `scripts/backup.sh` ve `scripts/restore.sh` kullanılır.
 
-**Backup komutu, proje kökünde:**
+Scriptler, Kubernetes `devops-case` namespace'inde çalışan `mongodb-0` Pod'u üzerinde çalıştırılır. Docker Compose MongoDB container'ına yönelik değildir.
+
+### 12.1. Backup İşlemi
+
+Proje kökünde aşağıdaki komut çalıştırılır:
 
 ```bash
 ./scripts/backup.sh
 ```
 
-**Script, backups/YYYYMMDDTHHMMSSZ/ klasörünü oluşturur ve aşağıdaki dosyaları yazar:**
+Script, `mongodump` kullanarak iki veritabanını ayrı arşiv dosyalarına kaydeder.
+
+Her çalıştırmada `backups/YYYYMMDDTHHMMSSZ/` klasörü oluşturulur:
 
 - `sample_training.archive`
 - `github_etl.archive`
 - `SHA256SUMS`
 
-mongodump çıktıları host bilgisayara arşiv olarak aktarılır. Script boş arşivleri ve başarısız dump işlemlerini hata olarak değerlendirir. Klasör 700, dosyalar 600 izinleriyle oluşturulur; checksum listesi SHA-256 ile hesaplanır.
+Arşivler Kubernetes Pod'undan yerel bilgisayara aktarılır. Başarısız dump işlemleri ve boş arşivler hata olarak değerlendirilir. Backup klasörü `700`, dosyalar `600` izinleriyle oluşturulur.
 
-**Geri yükleme:**
+Arşivlerin SHA-256 bütünlük doğrulaması şu komutla yapılır:
+
+```bash
+(cd backups/<timestamp> && shasum -a 256 -c SHA256SUMS)
+```
+
+### 12.2. Restore İşlemi
+
+Proje kökünde aşağıdaki komut çalıştırılır:
 
 ```bash
 ./scripts/restore.sh backups/<timestamp>
 ```
 
-Script önce shasum -a 256 -c SHA256SUMS ile arşivlerin checksum değerlerini doğrular, ardından kullanıcıdan RESTORE metnini girerek onaylamasını ister. mongorestore --drop kullanıldığı için hedef collection'larda mevcut veri silinerek yedekteki veri yüklenir. Üretim verisine rastgele uygulanmamalıdır.
+Script önce SHA-256 checksum değerlerini doğrular, ardından kullanıcıdan `RESTORE` onayı ister.
 
-Uçtan uca doğrulama senaryosu: arayüzde kayıt oluşturma, yedek alma, ilgili collection'ı silme, verinin arayüzde ve MongoDB'de yok olduğunu kontrol etme, arşivden geri yükleme ve aynı kaydın geri döndüğünü doğrulama. Bu senaryo çalışma sürecinde test edilmiştir; teslim kanıtları docs/screenshots ve `TESLIM_KANITLARI.md` dosyasında ayrıca sunulmalıdır.
+`mongorestore --drop` kullanıldığı için yedekte bulunan collection'ların mevcut sürümleri silinir ve arşivdeki veriler geri yüklenir.
 
-Yerel backup klasörü Kubernetes cluster'ının dışındadır; ancak aynı fiziksel bilgisayardaki disk kaybına karşı bağımsız bir off-site koruma değildir. Bu sürümde otomatik yedekleme planlayıcısı, şifreli uzak object storage ve otomatik retention temizliği yoktur. Gerçek ölçülen RTO, seçilen RPO/RTO hedefleri ve saklama politikası `docs/backup-restore.md` dosyasında ayrıca yazılmalıdır. Tahmini süre veya hedefler test sonucu gibi verilmemelidir.
+**Dikkat:** Backup alındıktan sonra yapılan veri değişiklikleri restore sırasında kaybolabilir. Bu işlem üretim ortamında kontrollü uygulanmalıdır.
+
+### 12.3. Gerçek Backup ve Restore Testi
+
+Backup ve restore mekanizması, 10 Kasım 2026 tarihinde yerel Kubernetes ortamında React uygulaması ve MongoDB birlikte kullanılarak test edilmiştir.
+
+**Test ortamı:**
+
+- Kubernetes context: `k3d-devops-case`
+- Namespace: `devops-case`
+- MongoDB Pod: `mongodb-0`
+- Frontend: `http://localhost:8082/records`
+- Backup klasörü: `backups/20261110T161624Z`
+- Test kaydı: `Backup Test`
+
+**1. React arayüzünden kayıt oluşturma**
+
+React uygulamasının `Create Record` ekranından aşağıdaki çalışan kaydı oluşturulmuştur:
+
+| Alan | Değer |
+| --- | --- |
+| Name | `Backup Test` |
+| Position | `Backup Test` |
+| Level | `Junior` |
+
+Kayıt, `Record List` ekranında mevcut `Employee1` kaydıyla birlikte görüntülenmiştir.
+
+Aynı kayıt MongoDB'deki `sample_training.records` collection'ında doğrulanmıştır. Backup öncesinde toplam 2 kayıt bulunmaktadır.
+
+![React arayüzünde oluşturulan test kaydı](docs/screenshots/35-backup-ui-record-created.png)
+
+**2. Backup alma ve bütünlük doğrulaması**
+
+ETL CronJob'ı test sırasında yeni veri yazılmasını önlemek amacıyla geçici olarak askıya alınmıştır.
+
+Ardından aşağıdaki komut çalıştırılmıştır:
+
+```bash
+./scripts/backup.sh
+```
+
+Backup dosyaları `backups/20261110T161624Z` klasörüne kaydedilmiştir.
+
+`sample_training` veritabanındaki `records` collection'ından 2 belge, `backup_restore_test` collection'ından 1 belge ve `github_etl.repositories` collection'ından 3 belge yedeklenmiştir.
+
+Her iki arşivin SHA-256 doğrulaması başarılıdır:
+
+```text
+sample_training.archive: OK
+github_etl.archive: OK
+```
+
+![Backup oluşturma ve SHA-256 doğrulaması](docs/screenshots/36-backup-ui-created.png)
+
+**3. MongoDB collection'ını silme**
+
+Gerçek veri kaybını simüle etmek için React uygulamasının kullandığı `sample_training.records` collection'ı MongoDB üzerinden silinmiştir.
+
+Silme öncesinde collection'da `Backup Test` ve `Employee1` olmak üzere 2 kayıt bulunmaktaydı.
+
+```text
+RECORDS BEFORE DROP:
+2
+
+COLLECTION DROPPED:
+true
+
+RECORDS AFTER DROP:
+0
+```
+
+![MongoDB records collection'ının silinmesi](docs/screenshots/37-backup-records-dropped.png)
+
+**4. Veri kaybını hem arayüzde hem MongoDB'de doğrulama**
+
+Collection silindikten sonra React uygulamasındaki `Record List` sayfası yenilenmiştir.
+
+Önceden listelenen `Backup Test` ve `Employee1` kayıtları artık arayüzde görüntülenmemiştir.
+
+![React arayüzünde veri kaybı](docs/screenshots/38-backup-ui-data-lost.png)
+
+Aynı zamanda MongoDB üzerinde `Backup Test` kaydı sorgulanmıştır.
+
+```text
+BACKUP TEST AFTER DELETION:
+null
+
+TOTAL RECORDS:
+0
+```
+
+Böylece veri kaybı hem uygulama arayüzünde hem veritabanında doğrulanmıştır.
+
+![MongoDB üzerinde veri kaybının doğrulanması](docs/screenshots/39-backup-db-data-lost.png)
+
+**5. Backup'tan geri yükleme ve süre ölçümü**
+
+Aşağıdaki komut çalıştırılarak backup'tan geri yükleme gerçekleştirilmiştir:
+
+```bash
+/usr/bin/time -p ./scripts/restore.sh backups/20261110T161624Z
+```
+
+Script, arşivlerin SHA-256 bütünlüğünü doğrulamış ve kullanıcıdan `RESTORE` onayı almıştır.
+
+`mongorestore --drop` ile iki veritabanındaki yedeklenmiş collection'lar geri yüklenmiştir.
+
+**Gerçek restore sonuçları:**
+
+| Veritabanı | Geri yüklenen belge | Başarısız belge |
+| --- | ---: | ---: |
+| `sample_training` | 3 | 0 |
+| `github_etl` | 3 | 0 |
+| **Toplam** | **6** | **0** |
+
+Terminal çıktısı:
+
+```text
+Restore completed successfully.
+
+real 4,80
+user 0,12
+sys 0,06
+```
+
+Restore script'inin toplam çalışma süresi 4,80 saniye olarak ölçülmüştür. Bu süre kullanıcı onayını da içerir; uygulamanın uçtan uca kurtarma süresi olarak değerlendirilmemiştir.
+
+![Restore işlemi ve ölçülen süre](docs/screenshots/40-backup-restore-timed.png)
+
+**6. Geri yüklenen verilerin hem arayüzde hem MongoDB'de doğrulanması**
+
+Restore tamamlandıktan sonra React uygulamasındaki `Record List` sayfası yeniden yüklenmiştir.
+
+Silinen `Backup Test` ve `Employee1` kayıtlarının aynı alan değerleriyle yeniden listelendiği doğrulanmıştır.
+
+![React arayüzünde kurtarılan kayıtlar](docs/screenshots/41-backup-ui-recovered.png)
+
+MongoDB üzerinde yapılan sorgularda da her iki kayıt bulunmuştur.
+
+```text
+RESTORED BACKUP TEST RECORD:
+name: 'Backup Test'
+position: 'Backup Test'
+level: 'Junior'
+
+RESTORED EMPLOYEE1 RECORD:
+name: 'Employee1'
+position: 'Position1'
+level: 'Intern'
+
+TOTAL RECORDS:
+2
+```
+
+Bu sonuçlar, uygulamanın kullandığı gerçek verilerin backup'tan geri getirildiğini ve React arayüzünde yeniden görüntülenebildiğini kanıtlamaktadır.
+
+![MongoDB üzerinde kurtarılan kayıtların doğrulanması](docs/screenshots/42-backup-db-recovered.png)
+
+**7. Test sonrası servis kontrolü**
+
+Restore ve veri doğrulaması tamamlandıktan sonra `github-etl` CronJob'ı yeniden etkinleştirilmiştir.
+
+Son Kubernetes kontrolünde:
+
+- `github-etl`: `SUSPEND=False`, `ACTIVE=0`
+- Backend deployment: `1/1 Ready`
+- Frontend deployment: `1/1 Ready`
+- MongoDB Pod: `1/1 Running`
+- MongoDB Pod restart sayısı: `0`
+
+sonuçları alınmıştır.
+
+### 12.4. Test Sonucu ve Sınırlamalar
+
+**Sonuç: Backup ve restore testi başarılı.**
+
+Teknik case kapsamında istenen altı aşama tamamlanmıştır: React arayüzünden kayıt oluşturma, backup alma, ilgili MongoDB collection'ını silme, veri kaybını hem arayüzde hem veritabanında doğrulama, restore gerçekleştirme ve kayıtların iki tarafta yeniden göründüğünü kanıtlama.
+
+Testte toplam 6 belge hatasız geri yüklenmiş, restore script'inin çalışma süresi 4,80 saniye olarak ölçülmüştür.
+
+**RPO/RTO hedefleri ve sınırlamalar:**
+
+- **Hedef RPO:** 24 saat. Mevcut manuel backup sistemi bu hedefi otomatik olarak garanti etmemektedir.
+- **Hedef RTO:** 15 dakika. Restore script'i 4,80 saniyede tamamlanmıştır; ancak uçtan uca uygulama kurtarma süresi ayrıca ölçülmediği için RTO hedefinin karşılandığı kesin olarak doğrulanmamıştır.
+- **Retention hedefi:** 7 gün. Otomatik retention temizliği uygulanmamıştır.
+- Backup işlemi manuel başlatılır; otomatik zamanlayıcı bulunmamaktadır.
+- Backup dosyaları Kubernetes cluster'ının dışında, aynı fiziksel bilgisayarda saklanır. Disk kaybına karşı bağımsız off-site koruma sağlamaz.
+- Şifreli uzak object storage kullanılmamaktadır.
+- `mongorestore --drop` nedeniyle backup sonrasındaki değişiklikler kaybolabilir.
+- ETL CronJob'ı test sırasında manuel olarak durdurulmuştur; diğer uygulama yazmaları otomatik olarak engellenmemektedir.
+
+Mevcut çözüm, yerel Kubernetes ortamında uçtan uca test edilmiş manuel bir MongoDB backup ve restore mekanizmasıdır. Tam otomatik bir production disaster recovery sistemi değildir.
+
+Ayrıntılı operasyon prosedürleri `docs/backup-restore.md`, ekran görüntüleri ve test sonuçları ise `TESLIM_KANITLARI.md` dosyasında sunulmuştur.
 
 ## 13. ROLLBACK, TEMİZLİK VE GÜVENLİK
 
