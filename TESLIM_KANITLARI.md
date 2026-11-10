@@ -1,57 +1,296 @@
 # TESLİM KANITLARI
 
-Teslimin başarılı şekilde tamamlanmış sayılabilmesi için çalışan sisteme ait ekran görüntülerini `docs/screenshots/` klasörüne ekleyin ve aşağıdaki maddelerde ilgili dosya yolunu belirtin.
+## 1. MERN Uygulaması ve CRUD Doğrulaması
 
-Ekran görüntülerinde gerçek credential, token, parola, private key veya hassas bağlantı bilgileri görünmemelidir.
+React arayüzü üzerinden kayıt listeleme, oluşturma ve güncelleme işlemleri test edilmiştir. Uygulama, Kubernetes ortamında çalıştırılmış ve tarayıcı üzerinden erişilmiştir.
 
-## 1. Web Uygulaması
+### 1.1. Kayıt listesi
 
-### 1.1 Ana sayfa
+![Record List](docs/screenshots/01-web-homepage.png)
 
-- **Görsel:** `docs/screenshots/...`
-- **Açıklama:**
+React uygulamasının `Record List` sayfasında MongoDB'den okunan kayıtlar görüntülenmektedir. Kayıtların isim, pozisyon ve seviye bilgileri listelenmekte, her kayıt için `Edit` ve `Delete` seçenekleri sunulmaktadır.
 
-### 1.2 Create işlemi
+### 1.2. Yeni kayıt oluşturma
 
-- **Form görseli:** `docs/screenshots/...`
-- **Başarılı sonuç görseli:** `docs/screenshots/...`
-- **Açıklama:**
+![Create Record](docs/screenshots/02-web-create-form.png)
 
-### 1.3 Edit işlemi
+`Create Record` sayfasında aşağıdaki bilgilerle yeni bir kayıt hazırlanmıştır:
 
-- **İşlem öncesi görsel:** `docs/screenshots/...`
-- **İşlem sonrası görsel:** `docs/screenshots/...`
-- **Açıklama:**
+- **Name:** Test Evidence
+- **Position:** Test1
+- **Level:** Senior
 
-## 2. Docker
+![Created Record](docs/screenshots/03-web-create-success.png)
 
-- **Image build görseli:** `docs/screenshots/...`
-- **Çalışan container görseli:** `docs/screenshots/...`
-- **Açıklama:**
+Form gönderildikten sonra `Test Evidence` kaydının `Record List` sayfasında görüntülendiği doğrulanmıştır. Böylece yeni kayıt oluşturma ve oluşturulan kaydı listeleme işlemleri başarılı olmuştur.
 
-## 3. Kubernetes
+### 1.3. Kayıt güncelleme
 
-- **Pod/workload durumu:** `docs/screenshots/...`
-- **Service ve varsa Ingress durumu:** `docs/screenshots/...`
-- **ETL CronJob/Job durumu:** `docs/screenshots/...`
-- **Açıklama:**
+![Edit Record](docs/screenshots/04-web-edit-before.png)
 
-## 4. Python ETL
+Oluşturulan `Test Evidence` kaydı için `Edit` seçeneği kullanılarak güncelleme sayfası açılmıştır. Mevcut kayıt bilgileri form üzerinde görüntülenmiştir.
 
-### 4.1 İlk veri aktarımı
+Kaydın pozisyon bilgisi `Test1` değerinden `DevOps Engineer` olarak değiştirilmiştir. İsim ve seviye bilgileri korunmuştur.
 
-GitHub repository bilgilerinin MongoDB’ye ilk kez kaydedildiğini gösterin.
+![Updated Record](docs/screenshots/05-web-edit-success.png)
 
-- **Görsel veya terminal çıktısı:** `docs/screenshots/...`
-- **Açıklama:**
+Güncelleme işlemi tamamlandıktan sonra `Record List` sayfasında `Test Evidence` kaydının yeni pozisyon bilgisiyle görüntülendiği doğrulanmıştır.
 
-### 4.2 Aynı repository için güncelleme
+**Test sonucu:** React arayüzünde kayıt listeleme, oluşturma ve güncelleme işlemleri başarılıdır. Silme işlemi bu ekran görüntüsü grubunda ayrıca belgelenmemiştir.
 
-Aynı repository tekrar işlendiğinde duplicate kayıt oluşmadığını ve mevcut kaydın güncellendiğini gösterin. Mümkünse repository sayısını ve güncellenen alanı aynı kanıt içinde belirtin.
+---
 
-- **Görsel veya terminal çıktısı:** `docs/screenshots/...`
-- **Kullanılan benzersiz alan:**
-- **Açıklama:**
+## 2. Docker Compose Doğrulaması
+
+MERN uygulamasının Docker Compose ile container ortamında oluşturulması ve çalıştırılması doğrulanmıştır. Backend ve frontend için ayrı Docker image'ları oluşturulmuş, MongoDB servisiyle birlikte başlatılmıştır.
+
+### 2.1. Docker image oluşturma
+
+Kullanılan komut:
+
+```bash
+docker compose up -d --build
+```
+
+![Docker image build](docs/screenshots/06-docker-image-build.png)
+
+Docker Compose işlemi sırasında backend ve frontend image'ları başarıyla oluşturulmuştur.
+
+Build çıktısında `case-backend:1.0` ve `case-frontend:1.0` image'larının oluşturulduğu, MongoDB ve backend container'larının sağlık kontrollerini geçtiği, frontend container'ının başlatıldığı görülmektedir.
+
+### 2.2. Container durumlarının doğrulanması
+
+Kullanılan komut:
+
+```bash
+docker compose ps
+```
+
+![Docker Compose containers](docs/screenshots/07-docker-containers-running.png)
+
+Docker Compose ortamında üç servis doğrulanmıştır:
+
+| Servis | Container | Doğrulanan durum |
+| --- | --- | --- |
+| MongoDB | `devops-case-mongodb-1` | Up, healthy |
+| Backend | `devops-case-backend-1` | Up, healthy |
+| Frontend | `devops-case-frontend-1` | Up |
+
+Frontend servisi yerel bilgisayarda `127.0.0.1:8081` adresine yönlendirilmiştir. Backend ve MongoDB servisleri Docker ağı içerisinde çalışmaktadır.
+
+**Test sonucu:** Docker Compose ile üç servis başarıyla başlatılmıştır. MongoDB ve backend sağlık kontrollerini geçmiş, frontend container'ının çalıştığı doğrulanmıştır.
+
+---
+
+## 3. Kubernetes Deployment Doğrulaması
+
+Uygulama, yerel `k3d-devops-case` Kubernetes cluster'ında `devops-case` namespace'i altında çalıştırılmıştır.
+
+Frontend ve backend `Deployment`, MongoDB `StatefulSet`, ETL ve monitoring işlemleri ise `CronJob` kaynakları üzerinden yönetilmektedir.
+
+### 3.1. Workload ve Pod durumları
+
+Kullanılan komut:
+
+```bash
+kubectl get deployments,statefulsets,pods -n devops-case
+```
+
+![Kubernetes workloads](docs/screenshots/08-kubernetes-workloads.png)
+
+Kubernetes üzerinde aşağıdaki durumlar doğrulanmıştır:
+
+| Bileşen | Kubernetes kaynağı | Doğrulanan durum |
+| --- | --- | --- |
+| Backend | Deployment | 1/1 Available |
+| Frontend | Deployment | 1/1 Available |
+| MongoDB | StatefulSet | 1/1 Ready |
+| Backend Pod | Pod | Running |
+| Frontend Pod | Pod | Running |
+| MongoDB Pod | Pod | Running |
+
+Backend, frontend ve MongoDB Pod'larının sıfır restart ile çalıştığı görülmektedir.
+
+Monitoring Job'larına ait tamamlanmış Pod'lar `Completed` durumundadır. Bu durum, kısa süreli Job işlemlerinin başarıyla sona erdiğini gösterir.
+
+### 3.2. Kubernetes servisleri ve erişim noktaları
+
+Kullanılan komut:
+
+```bash
+kubectl get services -n devops-case -o wide
+```
+
+![Kubernetes Services](docs/screenshots/09-kubernetes-services.png)
+
+Uygulamanın Kubernetes servisleri aşağıdaki şekilde yapılandırılmıştır:
+
+| Service | Tür | Port | Açıklama |
+| --- | --- | --- | --- |
+| `frontend` | NodePort | 8080:30080/TCP | Uygulamanın kullanıcı arayüzüne erişim sağlar. |
+| `case-backend` | ClusterIP | 5050/TCP | Frontend Nginx reverse proxy üzerinden backend API'ye erişim sağlar. |
+| `mongodb-service` | Headless Service | 27017/TCP | Backend ve ETL iş yüklerinin MongoDB Pod'una DNS üzerinden bağlanmasını sağlar. |
+
+`mongodb-service` için `CLUSTER-IP` değerinin `None` olması, servisin headless olarak yapılandırıldığını göstermektedir.
+
+**Dış erişim:** Frontend NodePort üzerinden erişilebilir. Backend ve MongoDB için doğrudan dış erişim sağlayan NodePort veya LoadBalancer tanımlanmamıştır.
+
+### 3.3. CronJob ve Job durumları
+
+Kullanılan komutlar:
+
+```bash
+kubectl get cronjobs -n devops-case
+
+kubectl get jobs -n devops-case \
+  --sort-by=.metadata.creationTimestamp
+```
+
+![Kubernetes CronJobs](docs/screenshots/10-kubernetes-cronjobs.png)
+
+Kubernetes ortamında iki zamanlanmış iş yükü bulunmaktadır:
+
+| CronJob | Zamanlama | Açıklama |
+| --- | --- | --- |
+| `github-etl` | `0 * * * *` | GitHub repository verilerini saatlik olarak MongoDB'ye aktarır. |
+| `monitoring-check` | `* * * * *` | Backend ve ETL durumlarını her dakika kontrol eder. |
+
+Her iki CronJob için `TIMEZONE=Etc/UTC` ve `SUSPEND=False` olduğu doğrulanmıştır.
+
+Ekran görüntüsünde son GitHub ETL ve monitoring Job'larının `Complete` durumuyla başarıyla tamamlandığı görülmektedir.
+
+Job listesinde geçmişten kalan iki başarısız monitoring çalışması da bulunmaktadır. Bu çalışmaların kesin hata nedeni, ilgili Pod'ların artık mevcut olmaması nedeniyle belirlenememiştir. Daha sonraki monitoring çalışmaları başarılı tamamlanmıştır.
+
+**Test sonucu:** Kubernetes Deployment, StatefulSet, Pod, Service, CronJob ve Job kaynaklarının yapılandırılması ve güncel çalışma durumları doğrulanmıştır. Backend, frontend ve MongoDB servisleri sağlıklı biçimde çalışmaktadır.
+
+## 4. Python ETL Doğrulaması
+
+Python ETL uygulamasının Kubernetes CronJob üzerinden çalıştırılması, GitHub REST API'den repository verilerini alması, MongoDB'ye kaydetmesi ve tekrar çalıştırıldığında mükerrer kayıt oluşturmaması doğrulanmıştır.
+
+Testler, `devops-case` namespace'inde çalışan `github-etl` CronJob'ından manuel Job oluşturularak gerçekleştirilmiştir. Mevcut MongoDB verileri silinmemiştir.
+
+### 4.1. ETL çalıştırma ve MongoDB veri doğrulaması
+
+![ETL çalıştırma ve MongoDB kayıtları](docs/screenshots/11-etl-first-import.png)
+
+`github-etl` CronJob'ının saatlik olarak (`0 * * * *`, UTC) çalışacak şekilde yapılandırıldığı ve etkin durumda olduğu doğrulanmıştır.
+
+CronJob şablonundan `etl-evidence-first` isimli manuel Job oluşturulmuştur:
+
+```bash
+kubectl create job etl-evidence-first \
+  --from=cronjob/github-etl \
+  -n devops-case
+
+kubectl wait --for=condition=complete \
+  job/etl-evidence-first \
+  -n devops-case --timeout=180s
+
+kubectl logs -n devops-case job/etl-evidence-first
+```
+
+ETL loglarında MongoDB bağlantısının başarılı olduğu ve GitHub REST API'den 3 repository bilgisinin alındığı görülmektedir.
+
+**Gerçek ETL sonucu:**
+
+```text
+GitHub repositories retrieved: 3
+UPDATED repository=iremsilay/calculator-project
+UPDATED repository=iremsilay/devops-case
+UPDATED repository=iremsilay/devops-case-study
+ETL completed successfully: fetched=3 inserted=0 updated=3 unchanged=0
+```
+
+Bu çalışmada 3 mevcut repository güncellenmiş, yeni belge eklenmemiştir.
+
+MongoDB üzerindeki `github_etl.repositories` koleksiyonu sorgulanmış ve aşağıdaki kayıtlar doğrulanmıştır:
+
+| Repository | github_id |
+|---|---:|
+| calculator-project | 1410976075 |
+| devops-case | 1447619693 |
+| devops-case-study | 1433759516 |
+
+Böylece ETL Job'ının GitHub verilerini başarıyla aldığını ve MongoDB'deki repository kayıtlarını işlediğini gösteren kanıt elde edilmiştir.
+
+### 4.2. Tekrarlı çalıştırma ve upsert doğrulaması
+
+![ETL tekrar çalıştırma ve upsert sonucu](docs/screenshots/14-etl-upsert-result.png)
+
+Aynı CronJob şablonundan ikinci bir manuel Job oluşturularak ETL yeniden çalıştırılmıştır:
+
+```bash
+kubectl create job etl-evidence-second \
+  --from=cronjob/github-etl \
+  -n devops-case
+
+kubectl wait --for=condition=complete \
+  job/etl-evidence-second \
+  -n devops-case --timeout=180s
+
+kubectl logs -n devops-case job/etl-evidence-second
+```
+
+İkinci çalıştırmada ETL aynı 3 repository bilgisini yeniden almış ve mevcut kayıtları güncellemiştir.
+
+**Gerçek ETL sonucu:**
+
+```text
+GitHub repositories retrieved: 3
+UPDATED repository=iremsilay/calculator-project
+UPDATED repository=iremsilay/devops-case
+UPDATED repository=iremsilay/devops-case-study
+ETL completed successfully: fetched=3 inserted=0 updated=3 unchanged=0
+```
+
+İkinci çalıştırma sonrasında MongoDB'deki kayıt sayısı tekrar kontrol edilmiştir:
+
+```javascript
+db.repositories.countDocuments({})
+```
+
+Sonuç:
+
+```text
+3
+```
+
+İlk ve ikinci çalıştırmaların her ikisinde de 3 repository işlenmiş, yeni belge eklenmemiş ve koleksiyonun kayıt sayısı 3 olarak korunmuştur.
+
+Bu test, aynı repository verilerinin yeniden işlenmesi sırasında mükerrer belge oluşmadığını doğrulamaktadır.
+
+### 4.3. MongoDB unique index doğrulaması
+
+![MongoDB unique index](docs/screenshots/15-etl-unique-index.png)
+
+MongoDB'deki `github_etl.repositories` koleksiyonu üzerinde indeksler kontrol edilmiştir:
+
+```javascript
+db.repositories.getIndexes()
+```
+
+Sorgu sonucunda `github_id` alanı üzerinde aşağıdaki benzersiz indeks doğrulanmıştır:
+
+```javascript
+{
+  v: 2,
+  key: { github_id: 1 },
+  name: "github_id_1",
+  unique: true
+}
+```
+
+Bu indeks, aynı `github_id` değerine sahip birden fazla repository belgesinin koleksiyonda oluşturulmasını engeller.
+
+Ek olarak kayıt sayısı kontrol edilmiştir:
+
+```text
+Repository count: 3
+```
+
+**Test sonucu:** Python ETL uygulamasının Kubernetes üzerinde başarıyla çalıştığı, GitHub REST API'den 3 repository bilgisi aldığı, mevcut MongoDB belgelerini güncellediği, tekrarlı çalıştırmada kayıt sayısını koruduğu ve `github_id` benzersiz indeksinin bulunduğu doğrulanmıştır.
+
+Bu test mevcut kayıtlar üzerinde gerçekleştirildiğinden, boş veritabanına ilk veri ekleme senaryosu ayrıca test edilmemiştir.
 
 ## 5. CI/CD
 

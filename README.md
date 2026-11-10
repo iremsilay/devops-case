@@ -183,7 +183,21 @@ docker compose --profile etl run --rm etl
 
 ETL çıktısında fetched, inserted, updated ve unchanged sayaçları gösterilir. Bu Compose komutu saatlik bir scheduler kurmaz; saatlik planlama Kubernetes CronJob ile gerçekleştirilir.
 
-### 6.5 Temizlik
+### 6.5 ETL Tekrarlı Çalıştırma Doğrulaması
+
+GitHub ETL iş yükü, Kubernetes üzerinde `github-etl` CronJob şablonundan oluşturulan iki manuel Job ile test edilmiştir.
+
+Her iki çalıştırmada da GitHub REST API'den 3 repository bilgisi alınmış, mevcut 3 MongoDB belgesi güncellenmiş ve yeni belge eklenmemiştir (`fetched=3, inserted=0, updated=3, unchanged=0`).
+
+`github_etl.repositories` koleksiyonundaki toplam belge sayısı 3 olarak korunmuştur. Ayrıca `github_id` alanı üzerinde `unique: true` indeksinin bulunduğu doğrulanmıştır.
+
+**Kanıtlar:**
+
+- [11 - ETL çalıştırma ve MongoDB kayıtları](docs/screenshots/11-etl-first-import.png)
+- [14 - Tekrarlı ETL çalıştırma ve upsert sonucu](docs/screenshots/14-etl-upsert-result.png)
+- [15 - MongoDB unique index ve kayıt sayısı](docs/screenshots/15-etl-unique-index.png)
+
+### 6.6 Temizlik
 
 ```bash
 docker compose down
