@@ -58,7 +58,7 @@ Monitoring de bağımsızdır: `monitoring-check` CronJob -> backend ve ETL Kube
 - `case-backend`: ClusterIP, port 5050; cluster içinden erişilir.
 - `mongodb-service`: headless Service, port 27017; MongoDB StatefulSet için sabit ağ kimliği ve iç erişim sağlar.
 
-Mimari çizim ayrıca `docs/architecture.md` dosyasında hazırlanacaktır.
+Mimari çizim ayrıca `docs/architecture.md` dosyasında hazırlanmıştır.
 
 ## 4. REPOSITORY YAPISI
 
@@ -193,9 +193,9 @@ Her iki çalıştırmada da GitHub REST API'den 3 repository bilgisi alınmış,
 
 **Kanıtlar:**
 
-- [11 - ETL çalıştırma ve MongoDB kayıtları](docs/screenshots/11-etl-first-import.png)
-- [14 - Tekrarlı ETL çalıştırma ve upsert sonucu](docs/screenshots/14-etl-upsert-result.png)
-- [15 - MongoDB unique index ve kayıt sayısı](docs/screenshots/15-etl-unique-index.png)
+![11 - ETL çalıştırma ve MongoDB kayıtları](docs/screenshots/11-etl-first-import.png)
+![14 - Tekrarlı ETL çalıştırma ve upsert sonucu](docs/screenshots/14-etl-upsert-result.png)
+![15 - MongoDB unique index ve kayıt sayısı](docs/screenshots/15-etl-unique-index.png)
 
 ### 6.6 Temizlik
 
@@ -504,9 +504,9 @@ Başarılı workflow: [GitHub Actions Run #13](https://github.com/iremsilay/devo
 
 **Kanıtlar:**
 
-- [43 - Başarılı Security job'ları](docs/screenshots/43-security-jobs-success.png)
-- [44 - Trivy taraması ve SBOM üretimi](docs/screenshots/44-security-trivy-scan.png)
-- [45 - Güvenlik raporları ve SBOM artifact'ları](docs/screenshots/45-security-artifacts.png)
+![43 - Başarılı Security job'ları](docs/screenshots/43-security-jobs-success.png)
+![44 - Trivy taraması ve SBOM üretimi](docs/screenshots/44-security-trivy-scan.png)
+![45 - Güvenlik raporları ve SBOM artifact'ları](docs/screenshots/45-security-artifacts.png)
 
 ## 10. CI/CD VE RELEASE YÖNETİMİ
 
@@ -851,12 +851,12 @@ Tekrarlanan alarmın incelendiği manuel Job yeni bir Slack bildirimi göndermem
 
 **Kanıtlar:**
 
-- [49 - Monitoring ve servis sağlık durumu](docs/screenshots/49-observability-monitoring-health.png)
-- [50 - Sağlıklı monitoring logları](docs/screenshots/50-observability-monitoring-logs.png)
-- [51 - Backend arızası ve alarm tespiti](docs/screenshots/51-observability-backend-alert.png)
-- [52 - Slack backend alarmı](docs/screenshots/52-observability-slack-alert.png)
-- [53 - Backend recovery](docs/screenshots/53-observability-recovery.png)
-- [54 - Slack RESOLVED bildirimi](docs/screenshots/54-observability-slack-resolved.png)
+![49 - Monitoring ve servis sağlık durumu](docs/screenshots/49-observability-monitoring-health.png)
+![50 - Sağlıklı monitoring logları](docs/screenshots/50-observability-monitoring-logs.png)
+![51 - Backend arızası ve alarm tespiti](docs/screenshots/51-observability-backend-alert.png)
+![52 - Slack backend alarmı](docs/screenshots/52-observability-slack-alert.png)
+![53 - Backend recovery](docs/screenshots/53-observability-recovery.png)
+![54 - Slack RESOLVED bildirimi](docs/screenshots/54-observability-slack-resolved.png)
 
 **Sınırlamalar:** Bu test, backend kullanılabilirliği için alarm ve toparlanma senaryosunu doğrular. Bütün ETL alarm koşullarının veya cluster seviyesindeki tüm arızaların uçtan uca test edildiği anlamına gelmez. Prometheus/Grafana ve merkezi log toplama uygulanmamıştır.
 
@@ -1144,8 +1144,8 @@ Test sonunda geçici MongoDB container'ının kaldırıldığı ve Kubernetes ü
 
 **Kanıtlar:**
 
-- [46 - Backup doğrulaması ve başarılı restore](docs/screenshots/46-dr-backup-verification-and-success.png)
-- [48 - İzolasyon ve geçici container temizliği](docs/screenshots/48-dr-isolation-cleanup.png)
+![46 - Backup doğrulaması ve başarılı restore](docs/screenshots/46-dr-backup-verification-and-success.png)
+![48 - İzolasyon ve geçici container temizliği](docs/screenshots/48-dr-isolation-cleanup.png)
 
 ## 13. ROLLBACK, TEMİZLİK VE GÜVENLİK
 
