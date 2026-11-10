@@ -328,6 +328,32 @@ Her artifact, ilgili image'ın Trivy JSON güvenlik raporunu ve CycloneDX SBOM d
 
 **Workflow:** [GitHub Actions Run #13](https://github.com/iremsilay/devops-case/actions/runs/42861106121)
 
+### 7.2. Advanced 7 — Disaster Recovery Doğrulaması
+
+Core 8 kapsamında gerçekleştirilen gerçek backup/restore tatbikatına ek olarak, `scripts/verify-backup.sh` ile izole ortamda otomatik restore doğrulaması uygulanmıştır.
+
+**46 — Backup bütünlüğü ve başarılı restore doğrulaması**
+
+![Backup verification](docs/screenshots/46-dr-backup-verification-and-success.png)
+
+Script, `backups/20261110T161624Z` yedeğinin SHA-256 kontrolünü gerçekleştirmiş, iki MongoDB veritabanını geçici bir MongoDB container'ına geri yüklemiştir.
+
+`sample_training` veritabanında 3, `github_etl` veritabanında 3 olmak üzere toplam 6 belge başarıyla doğrulanmıştır.
+
+Sonuç: `PASS: Backup restored and verified successfully.`
+
+**48 — İzole test ortamının temizlenmesi**
+
+![Backup verification cleanup](docs/screenshots/48-dr-isolation-cleanup.png)
+
+`docker ps -a --filter "name=devops-backup-verify"` çıktısında geçici container bulunmadığı görülmektedir.
+
+`kubectl get pods -n devops-case` çıktısı backend, frontend ve MongoDB servislerinin çalışmaya devam ettiğini göstermektedir.
+
+**Sonuç:** Advanced 7 kapsamında cluster dışında tutulan backup arşivlerinin izole MongoDB ortamında geri yüklenebilirliği doğrulanmıştır. Test manuel başlatılmış, restore ve temizlik adımları otomatik gerçekleştirilmiştir.
+
+Zamanlanmış backup, uzak lokasyona yedekleme ve point-in-time recovery uygulanmamıştır.
+
 ## 8. Ek Kanıtlar
 
 - **Görsel:** `docs/screenshots/...`

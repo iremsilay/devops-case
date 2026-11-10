@@ -1003,6 +1003,56 @@ Mevcut çözüm, yerel Kubernetes ortamında uçtan uca test edilmiş manuel bir
 
 Ayrıntılı operasyon prosedürleri `docs/backup-restore.md`, ekran görüntüleri ve test sonuçları ise `TESLIM_KANITLARI.md` dosyasında sunulmuştur.
 
+### 12.5. Otomatik Backup Doğrulaması (Advanced 7)
+
+MongoDB backup arşivlerinin yalnızca dosya bütünlüğünü değil, gerçek bir MongoDB ortamında geri yüklenebilirliğini de doğrulamak amacıyla `scripts/verify-backup.sh` oluşturulmuştur.
+
+Script aşağıdaki işlemleri otomatik gerçekleştirir:
+
+1. Backup dosyalarının varlığını ve SHA-256 bütünlüğünü kontrol eder.
+2. Docker üzerinde ağ erişimi kapalı (`--network none`) geçici bir MongoDB 7 container'ı oluşturur.
+3. `sample_training` ve `github_etl` arşivlerini bu izole ortama geri yükler.
+4. Collection'ların bulunduğunu ve boş olmadığını kontrol eder.
+5. Doğrulama sonucunu `PASS` veya `FAIL` olarak bildirir.
+6. İşlem sonunda geçici container'ı otomatik olarak kaldırır.
+
+**Çalıştırma:**
+
+```bash
+./scripts/verify-backup.sh backups/20261110T161624Z
+```
+
+**Gerçek test sonucu:**
+
+| Collection | Kurtarılan belge |
+| --- | ---: |
+| `sample_training.records` | 2 |
+| `sample_training.backup_restore_test` | 1 |
+| `github_etl.repositories` | 3 |
+| **Toplam** | **6** |
+
+İki arşivin SHA-256 kontrolü başarılı olmuş, toplam 6 belge sıfır restore hatasıyla geri yüklenmiştir.
+
+```text
+PASS: Backup restored and verified successfully.
+Backup verification completed successfully.
+Cleaning up temporary MongoDB...
+```
+
+Test sonunda geçici MongoDB container'ının kaldırıldığı ve Kubernetes üzerindeki mevcut backend, frontend ve MongoDB servislerinin çalışmaya devam ettiği doğrulanmıştır.
+
+**Sınırlamalar:**
+
+- Doğrulama manuel olarak başlatılır; zamanlanmış otomatik test uygulanmamıştır.
+- Script, her collection'da en az bir belge bulunmasını bekler. Bilerek boş bırakılmış collection'larda başarısız olabilir.
+- Belge içerikleri veya uygulama seviyesindeki davranışlar bu script tarafından karşılaştırılmaz.
+- Backup'lar cluster dışında ancak aynı yerel bilgisayarda tutulur. Bağımsız uzak depolama ve point-in-time recovery uygulanmamıştır.
+
+**Kanıtlar:**
+
+- [46 - Backup doğrulaması ve başarılı restore](docs/screenshots/46-dr-backup-verification-and-success.png)
+- [48 - İzolasyon ve geçici container temizliği](docs/screenshots/48-dr-isolation-cleanup.png)
+
 ## 13. ROLLBACK, TEMİZLİK VE GÜVENLİK
 
 ### 13.1 Rollback
