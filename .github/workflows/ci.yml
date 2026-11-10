@@ -322,7 +322,7 @@ jobs:
             ${{ matrix.context }}
 
       - name: Scan image vulnerabilities
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: case-security-${{ matrix.component }}:scan
           scan-type: image
@@ -333,7 +333,7 @@ jobs:
           exit-code: '0'
 
       - name: Generate CycloneDX SBOM
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: case-security-${{ matrix.component }}:scan
           scan-type: image
