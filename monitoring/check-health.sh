@@ -294,7 +294,7 @@ read -r desired available <<< "$backend_data"
 desired="${desired:-1}"
 available="${available:-0}"
 
-if (( available < desired )); then
+if (( desired == 0 || available < desired )); then
   record_alert "BACKEND_UNAVAILABLE" \
     "Available replicas: $available/$desired"
 else

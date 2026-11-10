@@ -732,7 +732,7 @@ Başarılı CI pipeline ve GHCR image yayınlama sonuçları ekran görüntüler
 
 **Alarm türleri:**
 
-`BACKEND_UNAVAILABLE`: Backend kullanılabilir replica sayısının beklenenin altında olması.
+`BACKEND_UNAVAILABLE`: Backend için istenen replica sayısının sıfır olması veya kullanılabilir replica sayısının beklenenin altında kalması.
 
 `ETL_OVERDUE`: Son başarılı ETL'nin belirlenen süreyi aşması; mevcut eşik 4500 saniye (75 dakika).
 
@@ -765,6 +765,86 @@ kubectl get configmap monitoring-state -n devops-case -o yaml
 Backend ve ETL hata, throttling, yeniden bildirim ve RESOLVED senaryoları yerel Kubernetes ortamında test edilmiştir. Testlerin ardından geçici test CronJob/Job kaynakları kaldırılmış, otomatik monitoring yeniden etkinleştirilmiş ve sağlıklı log sonucu alınmıştır.
 
 **Sınır:** Cluster veya Kubernetes API tamamen erişilemezse cluster içinde çalışan monitoring CronJob'ı bildirim üretemeyebilir. Harici cluster availability monitoring kurulmamıştır. Prometheus/Grafana ve merkezi log depolama da bu sürümde yoktur.
+
+### 11.1. Advanced 4 — Doğrulanmış Alarm Senaryosu
+
+Advanced 4 kapsamında mevcut Kubernetes monitoring ve Slack alarm sistemi kullanılarak kontrollü backend arızası ve toparlanma testi gerçekleştirilmiştir.
+
+**Test kapsamı:**
+
+1. Backend ve frontend Deployment'larının çalıştığı, monitoring CronJob'ının etkin olduğu ve son kontrollerin başarılı tamamlandığı doğrulandı.
+2. Backend Deployment'ı geçici olarak sıfır replikaya indirildi.
+3. Monitoring, `BACKEND_UNAVAILABLE` durumunu `Available replicas: 0/0` mesajıyla tespit etti.
+4. Alarm durumu `monitoring-state` ConfigMap'inde `active:true` olarak doğrulandı.
+5. Slack kanalındaki gerçek `BACKEND_UNAVAILABLE` bildirimi doğrulandı.
+6. Tekrarlanan alarm için `ALERT_THROTTLED` mesajı görüldü. Bu sonuç, 900 saniyelik bildirim sınırlandırmasının çalıştığını gösterdi.
+7. Backend tekrar bir replikaya çıkarıldı ve Deployment'ın `1/1 Available` durumuna döndüğü doğrulandı.
+8. Monitoring kontrolleri yeniden başarılı tamamlandı, alarm durumu `active:false` olarak doğrulandı ve Slack'teki `RESOLVED` bildirimi görüntülendi.
+
+**Backend sağlık kontrolü iyileştirmesi:**
+
+Test sırasında `monitoring/check-health.sh` dosyasındaki eski koşulun, Deployment sıfır replikaya indirildiğinde `0/0` durumunu sağlıklı kabul ettiği tespit edildi.
+
+Bu nedenle backend kontrol koşulu aşağıdaki şekilde güncellendi:
+
+```bash
+if (( desired == 0 || available < desired )); then
+```
+
+Böylece backend için istenen replika sayısı sıfır olduğunda veya kullanılabilir replika sayısı beklenenin altında kaldığında `BACKEND_UNAVAILABLE` alarmı oluşturulur.
+
+Güncellenen script, Kubernetes `monitoring-script` ConfigMap'ine aktarıldı ve kontrollü testte çalıştığı doğrulandı.
+
+**Uygulama ve doğrulama komutları:**
+
+```bash
+kubectl scale deployment backend -n devops-case --replicas=0
+kubectl get deployment backend -n devops-case
+
+kubectl create job monitoring-backend-test \
+  --from=cronjob/monitoring-check \
+  -n devops-case
+
+kubectl logs -n devops-case job/monitoring-backend-test
+
+kubectl get configmap monitoring-state \
+  -n devops-case \
+  -o jsonpath='{.data.BACKEND_UNAVAILABLE}'
+```
+
+Test tamamlandıktan sonra backend yeniden başlatıldı:
+
+```bash
+kubectl scale deployment backend -n devops-case --replicas=1
+kubectl rollout status deployment/backend \
+  -n devops-case --timeout=180s
+```
+
+**Gerçek sonuçlar:**
+
+| Kontrol | Sonuç |
+| --- | --- |
+| Normal backend durumu | `1/1`, `BACKEND_HEALTHY` |
+| Arıza durumu | `0/0`, `BACKEND_UNAVAILABLE` |
+| Aktif alarm kaydı | `active:true` |
+| Slack alarmı | `BACKEND_UNAVAILABLE` bildirimi doğrulandı |
+| Tekrarlanan alarm | `ALERT_THROTTLED`, 15 dakika |
+| Toparlanma | Backend `1/1`, monitoring sağlıklı |
+| Temizlenen alarm | `active:false`, `last_sent:0` |
+| Slack toparlanma bildirimi | `RESOLVED` doğrulandı |
+
+Tekrarlanan alarmın incelendiği manuel Job yeni bir Slack bildirimi göndermemiştir; mevcut bildirim sınırı nedeniyle `ALERT_THROTTLED` sonucu üretmiştir. Toparlanma kontrolü sırasında alarm durumunun zaten temizlenmiş olduğu görülmüştür.
+
+**Kanıtlar:**
+
+- [49 - Monitoring ve servis sağlık durumu](docs/screenshots/49-observability-monitoring-health.png)
+- [50 - Sağlıklı monitoring logları](docs/screenshots/50-observability-monitoring-logs.png)
+- [51 - Backend arızası ve alarm tespiti](docs/screenshots/51-observability-backend-alert.png)
+- [52 - Slack backend alarmı](docs/screenshots/52-observability-slack-alert.png)
+- [53 - Backend recovery](docs/screenshots/53-observability-recovery.png)
+- [54 - Slack RESOLVED bildirimi](docs/screenshots/54-observability-slack-resolved.png)
+
+**Sınırlamalar:** Bu test, backend kullanılabilirliği için alarm ve toparlanma senaryosunu doğrular. Bütün ETL alarm koşullarının veya cluster seviyesindeki tüm arızaların uçtan uca test edildiği anlamına gelmez. Prometheus/Grafana ve merkezi log toplama uygulanmamıştır.
 
 ## 12. MONGODB BACKUP VE RESTORE
 

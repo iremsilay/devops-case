@@ -354,6 +354,56 @@ Sonuç: `PASS: Backup restored and verified successfully.`
 
 Zamanlanmış backup, uzak lokasyona yedekleme ve point-in-time recovery uygulanmamıştır.
 
+### 7.3. Advanced 4 — Observability ve Alarm Doğrulaması
+
+Kubernetes üzerinde çalışan monitoring sistemi kullanılarak backend arızasının algılanması, Slack alarm bildirimi, 15 dakikalık bildirim sınırlandırması ve toparlanma senaryosu test edilmiştir.
+
+**49 — Monitoring ve servislerin sağlıklı durumu**
+
+![Monitoring health](docs/screenshots/49-observability-monitoring-health.png)
+
+`github-etl` ve `monitoring-check` CronJob'larının etkin olduğu, backend ve frontend Deployment'larının `1/1 Available`, MongoDB Pod'unun `1/1 Running` durumunda bulunduğu doğrulanmıştır.
+
+**50 — Sağlıklı monitoring logları**
+
+![Monitoring logs](docs/screenshots/50-observability-monitoring-logs.png)
+
+Monitoring Job loglarında `BACKEND_HEALTHY`, `ETL_HEALTHY` ve `All monitoring checks passed` sonuçları görülmektedir. `monitoring-state` ConfigMap'inde tüm alarm durumları pasiftir.
+
+**51 — Backend arızasının tespit edilmesi**
+
+![Backend alert](docs/screenshots/51-observability-backend-alert.png)
+
+Backend Deployment'ı kontrollü olarak sıfır replikaya indirilmiştir.
+
+Monitoring, `BACKEND_UNAVAILABLE` alarmını `Available replicas: 0/0` mesajıyla tespit etmiştir. ConfigMap üzerinde alarmın `active:true` olduğu doğrulanmıştır.
+
+Tekrarlanan alarm için `ALERT_THROTTLED` sonucu alınmış ve 15 dakikalık bildirim sınırlandırması gözlemlenmiştir.
+
+**52 — Slack backend alarmı**
+
+![Slack alert](docs/screenshots/52-observability-slack-alert.png)
+
+Slack kanalında `BACKEND_UNAVAILABLE` olayına ait gerçek alarm bildirimi görülmektedir. Bildirimde namespace ve kullanılamayan backend replica sayısı yer almaktadır.
+
+**53 — Backend'in toparlanması**
+
+![Backend recovery](docs/screenshots/53-observability-recovery.png)
+
+Backend Deployment tekrar bir replikaya çıkarılmış ve `1/1 Available` durumuna ulaşmıştır.
+
+Monitoring Job'ı `BACKEND_HEALTHY` ve `All monitoring checks passed` sonuçlarını üretmiştir. ConfigMap'te backend alarmının `active:false`, `last_sent:0` olduğu doğrulanmıştır.
+
+**54 — Slack RESOLVED bildirimi**
+
+![Slack resolved](docs/screenshots/54-observability-slack-resolved.png)
+
+Slack kanalında `BACKEND_UNAVAILABLE has recovered` açıklamalı `RESOLVED` bildirimi görülmektedir.
+
+**Sonuç:** Advanced 4 kapsamında backend kullanılabilirliğinin izlenmesi, arızanın algılanması, alarm durumunun saklanması, Slack bildirimi, tekrarlanan alarmın sınırlandırılması ve toparlanma mekanizmaları gerçek Kubernetes ortamında doğrulanmıştır.
+
+Test sırasında tespit edilen `0/0` sağlık kontrolü problemi, `monitoring/check-health.sh` dosyasındaki koşul güncellenerek giderilmiştir.
+
 ## 8. Ek Kanıtlar
 
 - **Görsel:** `docs/screenshots/...`
