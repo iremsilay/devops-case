@@ -24,6 +24,7 @@ Bu doküman, yerel Kubernetes ortamındaki MongoDB verilerinin yedeklenmesi, ger
 | Otomatik zamanlama | Uygulanmadı |
 | Otomatik retention | Uygulanmadı |
 | Şifreli uzak depolama | Uygulanmadı |
+| Otomatik restore doğrulaması | `scripts/verify-backup.sh` ile geçici ve izole MongoDB container'ında doğrulama |
 
 ### 1.1. Backup içeriği
 
@@ -83,6 +84,7 @@ Ancak kesintinin başlangıcından uygulamanın tamamen doğrulanmasına kadar g
 - `mongodb-0` Pod'u çalışır durumda olmalıdır.
 - MongoDB kimlik bilgileri Pod ortamında tanımlı olmalıdır.
 - Backup dosyaları için yeterli yerel disk alanı bulunmalıdır.
+- Script'i çalıştıran kullanıcının, `devops-case` namespace'inde gerekli Kubernetes RBAC yetkileri bulunmalıdır. `kubectl exec` ve `kubectl cp` kullanımı için en az `pods` üzerinde okuma ve `pods/exec` alt kaynağında `create` yetkisi gerekir. Geniş cluster-admin yetkisi gerekli değildir.
 
 ### 3.2. Ortam kontrolü
 
@@ -138,29 +140,50 @@ Restore işleminden önce:
 
 1. Doğru backup klasörü seçilmelidir.
 2. Backup dosyalarının bütünlüğü kontrol edilmelidir.
-3. MongoDB'ye yazma yapan uygulama ve zamanlanmış işler değerlendirilmelidir.
-4. Restore işleminin mevcut collection'ları değiştireceği dikkate alınmalıdır.
-5. Gerekirse restore öncesinde güncel verilerin ayrıca yedeği alınmalıdır.
+3. Restore için bakım penceresi planlanmalı ve kullanıcıya kesinti bilgisi verilmelidir.
+4. MongoDB'ye yazan bilinen servisler ve zamanlanmış işler geçici olarak durdurulmalıdır.
+5. Restore işleminin mevcut collection'ları değiştireceği dikkate alınmalıdır.
+6. Gerekirse restore öncesindeki güncel veriler ayrıca yedeklenmelidir.
 
 **Uyarı:** `mongorestore --drop`, yedekte bulunan collection'ların mevcut sürümlerini silerek yedekteki içerikle değiştirir. Backup sonrasında yapılan değişiklikler kaybolabilir.
 
-### 4.2. ETL CronJob'ını geçici durdurma
+Restore sırasında backend'e gelen istekler hata alabilir. Bu nedenle restore, normal kullanıcı trafiğinin yönlendirilmediği bir bakım penceresinde gerçekleştirilmelidir.
+
+### 4.2. Veri yazan servislerin geçici olarak durdurulması
+
+Restore sırasında yeni ETL Job'larının veya backend üzerinden gelen kullanıcı isteklerinin MongoDB'ye yazmasını önlemek için bilinen yazıcılar geçici olarak durdurulur.
+
+Önce ETL CronJob'ını askıya alın:
 
 ```bash
 kubectl patch cronjob github-etl -n devops-case \
   -p '{"spec":{"suspend":true}}'
+```
 
+Ardından backend Deployment'ını sıfır replikaya indirin:
+
+```bash
+kubectl scale deployment backend -n devops-case --replicas=0
+```
+
+Durumu doğrulayın:
+
+```bash
 kubectl get cronjob github-etl -n devops-case
+kubectl get deployment backend -n devops-case
+kubectl get pods -n devops-case
 ```
 
 Beklenen durum:
 
 ```text
-SUSPEND=True
-ACTIVE=0
+github-etl: SUSPEND=True, ACTIVE=0
+backend:    READY=0/0
 ```
 
-Bu işlem yalnızca yeni zamanlanmış ETL Job'larını durdurur. Diğer uygulamaların MongoDB'ye yazmasını otomatik olarak engellemez.
+Backend Pod'larının tamamen sonlandığı doğrulanmadan restore işlemine başlanmamalıdır. `Completed` durumundaki eski ETL Job'ları yeniden yazma yapmaz; yalnızca `ACTIVE` değeri sıfır olmalıdır.
+
+Bu adım, bu projedeki bilinen MongoDB yazıcılarını durdurur. Gerçek production ortamında tüm yazıcılar, kuyruk tüketicileri, harici entegrasyonlar ve yönetim araçları bakım penceresi kapsamına alınmalıdır.
 
 ### 4.3. Restore işlemi
 
@@ -176,15 +199,13 @@ Ardından kullanıcıdan şu onayı ister:
 Type RESTORE to continue:
 ```
 
-Devam etmek için:
+Devam etmek için aşağıdaki değer girilmeli ve Enter'a basılmalıdır:
 
 ```text
 RESTORE
 ```
 
-girilmeli ve Enter'a basılmalıdır.
-
-Script `sample_training` ve `github_etl` veritabanlarını sırasıyla geri yükler.
+Script, `sample_training` ve `github_etl` veritabanlarını sırasıyla geri yükler.
 
 ### 4.4. ETL CronJob'ını yeniden etkinleştirme
 
@@ -205,7 +226,7 @@ kubectl get pod mongodb-0 -n devops-case
 
 ## 5. Doğrulama / Verification
 
-Backup ve restore işlemleri dört seviyede doğrulanır.
+Backup ve restore işlemleri beş seviyede doğrulanır.
 
 **1. Dosya bütünlüğü**
 
@@ -275,6 +296,31 @@ Böylece verilerin hem MongoDB'de hem uygulama arayüzünde kurtarıldığı gö
 
 Bu kontrollerin tamamı 10 Kasım 2026 tarihli testte başarılı olmuştur.
 
+**5. İzole ortamda otomatik restore doğrulaması (Advanced 7)**
+
+`scripts/verify-backup.sh`, backup arşivinin geri yüklenebilirliğini çalışan Kubernetes MongoDB verisine dokunmadan doğrular.
+
+```bash
+./scripts/verify-backup.sh backups/20261110T161624Z
+```
+
+Script önce `SHA256SUMS` dosyasını doğrular. Ardından geçici bir MongoDB Docker container'ı oluşturur, `sample_training` ve `github_etl` arşivlerini bu izole ortama geri yükler ve beklenen belge sayılarını kontrol eder.
+
+10 Kasım 2026 tarihli doğrulamada iki veritabanında toplam 6 belge geri yüklendi:
+
+```text
+sample_training: 3 documents
+github_etl: 3 documents
+PASS: Backup restored and verified successfully.
+```
+
+İşlem sonunda geçici container otomatik olarak kaldırılır. Böylece backup arşivinin yalnızca checksum değeri değil, gerçek bir MongoDB ortamında geri yüklenebilirliği de doğrulanır.
+
+**Kanıtlar:**
+
+- `46-dr-backup-verification-and-success.png`: SHA-256 doğrulaması, izole restore ve başarılı sonuç.
+- `48-dr-isolation-cleanup.png`: Geçici doğrulama container'ının temizlendiğinin doğrulanması.
+
 ## 6. Uçtan uca test sonucu / End-to-end test result
 
 **Test tarihi:** 10 Kasım 2026  
@@ -283,7 +329,7 @@ Bu kontrollerin tamamı 10 Kasım 2026 tarihli testte başarılı olmuştur.
 **Backup:** `backups/20261110T161624Z`  
 **Test kaydı:** `Backup Test`
 
-Test, teknik case dokümanındaki altı aşamayı kapsayacak şekilde React uygulaması ve MongoDB birlikte kullanılarak gerçekleştirilmiştir.
+Test, React uygulaması ve MongoDB kullanılarak gerçekleştirilmiştir. Backup arşivinin geri yüklenebilirliği ayrıca izole MongoDB container'ında otomatik olarak doğrulanmıştır.
 
 | # | Test adımı | Gerçek sonuç | Kanıt |
 | --- | --- | --- | --- |
@@ -293,10 +339,11 @@ Test, teknik case dokümanındaki altı aşamayı kapsayacak şekilde React uygu
 | 4 | Veri kaybını doğrulama | React listesi boşaldı; MongoDB sorgusu `null`, kayıt sayısı 0 | [38](screenshots/38-backup-ui-data-lost.png), [39](screenshots/39-backup-db-data-lost.png) |
 | 5 | Restore gerçekleştirme | Toplam 6 belge, 0 hata; script çalışma süresi 4,80 saniye | [40](screenshots/40-backup-restore-timed.png) |
 | 6 | Kurtarılan veriyi doğrulama | `Backup Test` ve `Employee1` hem React arayüzünde hem MongoDB'de yeniden görüntülendi | [41](screenshots/41-backup-ui-recovered.png), [42](screenshots/42-backup-db-recovered.png) |
+| 7 | İzole restore doğrulaması | Backup arşivleri geçici MongoDB container'ında geri yüklendi; toplam 6 belge doğrulandı ve container temizlendi | [46](screenshots/46-dr-backup-verification-and-success.png), [48](screenshots/48-dr-isolation-cleanup.png) |
 
 ### 6.1. Test sonrası servis durumu
 
-Restore ve veri doğrulaması tamamlandıktan sonra ETL CronJob'ı yeniden etkinleştirilmiştir.
+Restore ve veri doğrulaması tamamlandıktan sonra backend yeniden çalıştırılmış, ETL CronJob'ı yeniden etkinleştirilmiştir.
 
 Son Kubernetes kontrol sonuçları:
 
@@ -317,12 +364,12 @@ React arayüzünden oluşturulan kayıtların MongoDB collection'ının silinmes
 - Toplam 6 belge kurtarılmıştır.
 - Başarısız restore edilen belge sayısı 0'dır.
 - Restore script'inin ölçülen toplam çalışma süresi 4,80 saniyedir.
+- İzole ortamda yapılan otomatik restore doğrulaması başarıyla tamamlanmıştır.
 - Backend, frontend ve MongoDB servisleri test sonunda çalışır durumdadır.
 
 Uçtan uca kurtarma süresi ayrıca ölçülmediği için 15 dakikalık RTO hedefinin sağlandığı kesin olarak raporlanmamıştır.
 
 Ekran görüntülerinin tamamı `TESLIM_KANITLARI.md` dosyasında da listelenmiştir.
-
 
 ## 7. Bilinen sınırlamalar / Known limitations
 
@@ -334,8 +381,9 @@ Ekran görüntülerinin tamamı `TESLIM_KANITLARI.md` dosyasında da listelenmi�
 - MongoDB tek replica olarak çalışmaktadır; otomatik failover bulunmamaktadır.
 - Point-in-time recovery ve oplog tabanlı kurtarma uygulanmamıştır.
 - `mongorestore --drop` işlemi, yedek sonrasında yapılan değişiklikleri geri alabilir.
-- Restore işlemi sırasında ETL CronJob'ı manuel olarak durdurulmalıdır.
-- ETL CronJob'ının durdurulması diğer uygulama yazmalarını engellemez.
+- Restore runbook'u bu projedeki bilinen yazıcıları, yani backend Deployment'ını ve ETL CronJob'ını geçici olarak durdurur. Production ortamında tüm veri yazıcılarının, asenkron tüketicilerin ve harici entegrasyonların ayrıca envanteri çıkarılmalıdır.
+- Backend sıfır replikaya indirildiğinde kullanıcı istekleri hizmet alamaz. Restore işlemi bu nedenle bakım penceresinde yürütülmelidir.
+- İzole doğrulama, backup arşivinin geri yüklenebilir olduğunu gösterir; canlı production restore işleminin tüm trafik, yetki ve bağımlılık senaryolarını tek başına doğrulamaz.
 - Restore script'inin toplam çalışma süresi 4,80 saniye olarak ölçülmüştür. Ancak veri kaybından uygulamanın tamamen doğrulanmasına kadar geçen uçtan uca kurtarma süresi ölçülmemiştir.
 - Önerilen RPO, RTO ve retention hedefleri otomatik olarak uygulanmamaktadır.
 

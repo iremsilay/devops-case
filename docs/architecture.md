@@ -15,11 +15,14 @@ Bu doküman, MERN uygulamasının, GitHub ETL iş yükünün ve monitoring mekan
 | Veritabanı | MongoDB 7, tek replikalı StatefulSet |
 | Kalıcı depolama | `mongo-data` PersistentVolumeClaim, `2Gi` |
 
-**[Mimari diyagram (PDF)](architecture.pdf)**
+![Sistem Mimarisi](architecture.png)
 
-**[Düzenlenebilir mimari diyagramı (Draw.io)](architecture.drawio)**
+Yüksek çözünürlüklü sürüm ve düzenlenebilir kaynak dosyası:
 
-PDF, mimarinin tek sayfalık görsel sunumudur. Draw.io dosyası kutuların, bağlantıların ve açıklamaların düzenlenebildiği kaynak dosyadır. Diyagram, kullanıcı isteği ve yanıtını, zamanlanmış GitHub ETL işini, monitoring ve alarm akışını ayrı bölümlerde gösterir. Kubernetes cluster sınırının dışında kalan tarayıcı, GitHub REST API ve Slack Incoming Webhook ayrıca belirtilmiştir.
+- [Mimari diyagram (PDF)](architecture.pdf)
+- [Düzenlenebilir mimari diyagramı (Draw.io)](architecture.drawio)
+
+PDF, mimarinin tek sayfalık görsel sunumudur. Draw.io dosyası kutuların, bağlantıların ve açıklamaların düzenlenebildiği kaynak dosyadır. Diyagram; kullanıcı isteği ve yanıtını, zamanlanmış GitHub ETL işini, monitoring ve alarm akışını ayrı bölümlerde gösterir. Kubernetes cluster sınırının dışında kalan tarayıcı, GitHub REST API ve Slack Incoming Webhook ayrıca belirtilmiştir.
 
 ## 2. Kullanıcı İsteğinin İşlenmesi
 
@@ -77,9 +80,15 @@ Bu mekanizma cluster içinden çalışır. Cluster'ın tamamının erişilemez o
 | GitHub ETL | CronJob ve Job | Saatlik, tamamlandığında sonlanan veri toplama işlemidir. |
 | Monitoring | CronJob ve Job | Her dakika çalışan kısa süreli sağlık ve alarm kontrolüdür. |
 
-MongoDB Pod'u, `mongo-data` adlı PersistentVolumeClaim aracılığıyla `local-path` StorageClass üzerinde `2Gi` disk alanı kullanır. Böylece uygulama verileri MongoDB container'ının geçici dosya sisteminden ayrı tutulur ve Pod'un yeniden oluşturulmasında korunabilir. Bununla birlikte tek replikalı MongoDB ile yerel disk kullanımı, otomatik failover veya farklı makine arızalarına karşı yüksek erişilebilirlik sağlamaz.
+MongoDB Pod'u, `mongo-data` adlı PersistentVolumeClaim aracılığıyla `local-path` StorageClass üzerinde `2Gi` disk alanı kullanır. Böylece uygulama verileri MongoDB container'ının geçici dosya sisteminden ayrı tutulur ve Pod'un yeniden oluşturulmasında korunabilir.
 
-Backend, `/healthcheck` endpoint'ini liveness ve `/healthcheck/ready` endpoint'ini readiness amacıyla kullanır. Readiness kontrolü MongoDB erişimini de değerlendirir. Veritabanı bağlantısı kaybolduğunda backend süreci çalışmaya devam etse bile readiness isteği başarısız olabilir. Kubernetes, hazır olmayan Pod'u Service'in kullanılabilir endpoint'lerinden çıkarabilir; bu davranış kesintisiz hizmet garantisi değildir.
+`local-path` StorageClass yerel Kubernetes ortamı için seçilmiştir. Ancak production ortamında yerel disk, veriyi belirli bir node'a bağımlı hale getirebilir ve node kaybında erişilebilirlik riski oluşturur. Bu nedenle AWS EBS, Azure Disk veya uygun CSI sürücüsüyle sağlanan yönetilen blok depolama kullanılmalıdır. Bu çözümler volume topology kurallarını yönetir; çok bölgeli yüksek erişilebilirlik ve felaket kurtarma için ayrıca replica set, yedekleme ve uygun zone stratejisi gerekir.
+
+Tek replikalı MongoDB ile mevcut yerel disk kullanımı, otomatik failover veya node arızalarına karşı yüksek erişilebilirlik sağlamaz.
+
+Backend, `/healthcheck` endpoint'ini liveness ve `/healthcheck/ready` endpoint'ini readiness amacıyla kullanır. Readiness kontrolü MongoDB erişimini de değerlendirir. Veritabanı bağlantısı kaybolduğunda backend süreci çalışmaya devam etse bile readiness isteği başarısız olabilir.
+
+Kubernetes, hazır olmayan Pod'u Service'in kullanılabilir endpoint'lerinden çıkarabilir. Mevcut tek replikalı mimaride bu durum API için tam kesinti anlamına gelir. Buna rağmen MongoDB'ye erişemeyen backend'in istek kabul etmeye devam etmesi yerine trafiğin kesilmesi tercih edilmiştir. Böylece hatalı, eksik veya tutarsız veri işlemi riski azaltılır. Kesintisiz erişilebilirlik için birden fazla backend replikası ve veritabanı yüksek erişilebilirlik yapısı gerekir.
 
 ## 6. Backup, Restore ve Kurtarma Doğrulaması
 
@@ -95,7 +104,11 @@ Yedekleme halen manuel başlatılır; otomatik zamanlama, uzak ve bağımsız ye
 
 Gizli olmayan yapılandırmalar `app-config` ConfigMap üzerinden, MongoDB bağlantı bilgileri ve Slack webhook adresi ise Kubernetes Secret üzerinden sağlanır. Backend ve ETL için ayrı MongoDB bağlantı bilgileri kullanılır. Monitoring Pod'unun Kubernetes API erişimi ServiceAccount ve RBAC ile sınırlandırılmıştır.
 
-Mevcut çalışma ortamı yerel geliştirme, dağıtım ve doğrulama için hazırlanmıştır. Frontend NodePort erişimi düz HTTP kullanır; TLS terminasyonu ve Ingress Controller uygulanmamıştır. `NetworkPolicy`, HPA, çok düğümlü yüksek erişilebilirlik, MongoDB replica set ve otomatik failover da bu sürümün kapsamında değildir.
+Mevcut çalışma ortamı yerel geliştirme, dağıtım ve doğrulama için hazırlanmıştır. Frontend NodePort erişimi düz HTTP kullanır; TLS terminasyonu ve Ingress Controller uygulanmamıştır.
+
+`NetworkPolicy`, HPA, çok düğümlü yüksek erişilebilirlik, MongoDB replica set ve otomatik failover bu sürümün kapsamında değildir.
+
+Production ortamında Zero-Trust ağ yaklaşımı için namespace düzeyinde default-deny NetworkPolicy uygulanmalıdır. Ardından yalnızca gerekli akışlara izin verilmelidir: frontend Pod'larının backend'e, backend ve ETL Pod'larının MongoDB'ye, ETL'nin GitHub API'ye, monitoring Pod'unun Kubernetes API ve Slack webhook'a erişimi ile gerekli DNS trafiği. Bu kuralların uygulanabilmesi için NetworkPolicy desteği bulunan bir CNI kullanılmalıdır.
 
 Backend ve frontend image'ları ile Python ETL image'ı CI içinde Trivy ile taranır ve CycloneDX SBOM raporları üretilir. Bu kontrol, bilinen güvenlik açıklarının raporlanmasını sağlar; mevcut uygulamada tarama bulguları image yayınını otomatik olarak durdurmaz. CI güvenlik kontrolleri, runtime diyagramı yerine `README.md` içinde açıklanmıştır.
 

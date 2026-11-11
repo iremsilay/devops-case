@@ -1,137 +1,122 @@
 # DEVOPS TECHNICAL CASE — MERN APPLICATION AND PYTHON ETL
 
-## 1. ABOUT THE PROJECT
+## 1. PROJECT OVERVIEW
 
-This project is a DevOps technical assessment focused on reviewing the provided MERN application and Python ETL workload for production readiness, improving critical issues and moving the components into a reproducible runtime environment.
+This project was prepared to review the provided MERN application and Python ETL workload, address critical operational issues and run the applications in a reproducible environment.
 
-The solution offers two execution paths: local validation with Docker Compose and deployment to a local Kubernetes cluster created with k3d on Docker Desktop. Kubernetes is the final orchestration environment. No public cloud infrastructure or publicly accessible production environment has been deployed.
+The project uses Docker Compose for local validation and Docker Desktop with k3d for Kubernetes deployment. Kubernetes runs on a local cluster. No public cloud or internet-accessible production environment has been deployed.
 
-The MERN interface supports creating, listing, updating and deleting employee records. A separate Python ETL application retrieves repository information for a specified GitHub user through the GitHub API and stores it in MongoDB. Subsequent ETL runs update existing repository records instead of creating another record with the same GitHub repository identifier.
+The MERN application supports creating, listing, updating, and deleting employee records. The Python ETL retrieves repository information for the specified GitHub user through the GitHub API and stores it in MongoDB. On subsequent runs, it matches repositories by their GitHub identities and updates existing records.
 
-The project also includes GitHub Actions CI, container image builds, controlled local deployment and rollback, MongoDB backup and restore, Kubernetes-based monitoring and Slack notifications.
+The project also includes GitHub Actions CI and container image builds, controlled deployment and rollback to the local Kubernetes cluster, MongoDB backup and restore, Kubernetes-based monitoring and Slack notifications. The scope and limitations of the environment are explained in the relevant sections.
 
-This implementation is not presented as an exact equivalent of a production environment. Its security, availability and disaster recovery limitations are described at the end of this document.
-
-Repository: `https://github.com/iremsilay/devops-case`
+**Repository:** [iremsilay/devops-case](https://github.com/iremsilay/devops-case)
 
 ## 2. TECHNOLOGIES AND COMPONENTS
 
-**Frontend:** React, JavaScript and Nginx. The React application is compiled during the Docker build. The resulting static content is served by Nginx on port 8080 in the final container.
-
-**Backend:** Node.js 22, Express and the MongoDB driver. The HTTP API runs on port 5050. CRUD operations are available under `/record`, the liveness endpoint under `/healthcheck` and the MongoDB-aware readiness endpoint under `/healthcheck/ready`.
-
-**Database:** MongoDB 7. MERN records are stored in the `records` collection of the `sample_training` database. GitHub ETL records are stored in the `repositories` collection of the `github_etl` database.
-
-**ETL:** Python 3.11, Requests and PyMongo. It retrieves repository information from the GitHub API and performs upserts using a unique index on `github_id`.
-
-**Containers and local environment:** Docker, Docker Compose, Docker Desktop and k3d.
-
-**Orchestration:** Kubernetes Deployment, StatefulSet, Service, ConfigMap, Secret, Job and CronJob. MongoDB uses a PersistentVolumeClaim.
-
-**CI and image distribution:** GitHub Actions, Docker Buildx and GitHub Container Registry (GHCR). Backend, frontend and ETL images are built and published to GHCR on pushes to the `main` branch.
-
-**Monitoring:** Bash, Python, kubectl, Kubernetes CronJob, ConfigMap-based alert state and Slack Incoming Webhook.
-
-**Backup and restore:** mongodump, mongorestore, shell scripts and SHA-256 checksum verification.
+| Component | Technologies | Description |
+| --- | --- | --- |
+| Frontend | React, JavaScript, Nginx | The React application is built during the Docker build stage. The generated static files are served by Nginx on port 8080. Nginx forwards `/api` requests to the backend service. |
+| Backend | Node.js 22, Express, MongoDB Node.js driver | The API runs on port 5050. It provides CRUD operations for employee records under `/record`, a liveness check under `/healthcheck`, and a readiness check under `/healthcheck/ready` that also evaluates the MongoDB connection. |
+| Database | MongoDB 7 | Application records are stored in the `sample_training.records` collection, while ETL data is stored in `github_etl.repositories`. A PersistentVolumeClaim is used for persistent data in Kubernetes. |
+| ETL | Python 3.11, Requests, PyMongo | Retrieves repository data from the GitHub API and stores it in MongoDB. It performs upserts using the unique `github_id` field, preventing duplicate records for the same repository. |
+| Container environment | Docker, Docker Compose | Frontend, backend, ETL, and monitoring components are packaged as containers. Docker Compose runs the application in a local container environment. |
+| Orchestration | Docker Desktop, k3d, Kubernetes | The local Kubernetes cluster runs with k3d. Deployment, StatefulSet, Service, ConfigMap, Secret, Job, and CronJob resources are used. |
+| CI and image publishing | GitHub Actions, Docker Buildx, GitHub Container Registry | The pipeline runs builds, basic checks, and Cypress tests. Backend, frontend, and ETL images are published to GHCR after successful pushes to the `main` branch. |
+| Monitoring and notifications | Bash, Python, `kubectl`, Kubernetes CronJob, ConfigMap, Slack Incoming Webhook | The monitoring CronJob checks backend and ETL status. Alert state is stored in a ConfigMap, and Slack notifications are sent when required. |
+| Backup and restore | `mongodump`, `mongorestore`, shell scripts, SHA-256 | MongoDB data is archived with scripts. Archive SHA-256 checksums are verified before restore. |
 
 ## 3. ARCHITECTURE AND TRAFFIC FLOW
 
-Kubernetes namespace: `devops-case`.
+Kubernetes resources run in the `devops-case` namespace.
 
-**User requests follow this path in Kubernetes:**
+![Kubernetes architecture](docs/architecture.png)
 
-User -> Browser -> Frontend NodePort Service (30080) -> Frontend Pod (Nginx, 8080) -> Nginx Reverse Proxy (`/api`) -> `case-backend` ClusterIP Service (5050) -> Backend Pod (Node.js, 5050) -> `mongodb-service` (Headless Service, 27017) -> MongoDB StatefulSet Pod (`mongodb-0`).
+### WEB APPLICATION
 
-The frontend serves the React application's static files to the user's browser. Nginx forwards `/api` requests from the browser to the `case-backend` Service inside the cluster. For MongoDB operations, the backend connects to the MongoDB StatefulSet Pod through the headless `mongodb-service`.
+The application is externally accessible through the `frontend` NodePort Service. The Service routes traffic to the frontend Pod running Nginx. Nginx serves the static files of the React application.
 
-The frontend NodePort Service is the application's entry point from outside the cluster. The backend ClusterIP Service and MongoDB headless Service are configured for internal cluster access only.
+Browser requests sent to `/api` are forwarded by the Nginx reverse proxy to the `case-backend` Service inside the cluster. The backend Pod performs MongoDB operations for employee records through `mongodb-service`.
 
-This architecture does not include an Ingress Controller or TLS termination (HTTPS). It serves plain HTTP directly through NodePort. Access from the local computer requires a suitable host port mapping in the k3d cluster configuration.
+`frontend` is the only application service exposed externally through NodePort 30080. `case-backend` is a ClusterIP Service accessible only within the cluster. `mongodb-service` is a headless Service that provides stable network identity for the MongoDB StatefulSet.
 
-The Python ETL operates independently of user requests: `github-etl` CronJob -> ETL Job -> GitHub REST API -> MongoDB `github_etl.repositories` collection. The CronJob runs at the beginning of every hour in UTC (`0 * * * *`).
+This local architecture does not include an Ingress Controller or HTTPS/TLS termination. Traffic is served over HTTP. NodePort access from the local computer depends on the host port mapping defined when the k3d cluster is created.
 
-Monitoring is also independent: `monitoring-check` CronJob -> inspection of backend and ETL Kubernetes status -> alert state evaluation -> Slack webhook notification if needed. The CronJob runs every minute.
+### ETL WORKFLOW
 
-**Kubernetes Services:**
+The `github-etl` CronJob runs at the start of every hour in the UTC time zone (`0 * * * *`). A separate Kubernetes Job is created for each execution.
 
-- `frontend`: NodePort, Service port 8080 and nodePort 30080; the only application Service intended for external access.
-- `case-backend`: ClusterIP, port 5050; accessible within the cluster.
-- `mongodb-service`: headless Service, port 27017; provides stable network identity and internal access for the MongoDB StatefulSet.
+The ETL retrieves repository data from the GitHub REST API and stores it in the `github_etl.repositories` collection in MongoDB. When the same repository is processed again, the existing record is updated using the `github_id` field.
 
-An architecture diagram will also be prepared in `docs/architecture.md`.
+### MONITORING AND NOTIFICATIONS
+
+The `monitoring-check` CronJob runs every minute. It checks the available replica status of the backend Deployment, the ETL CronJob, and ETL Job results through the Kubernetes API.
+
+Alert state is stored in the `monitoring-state` ConfigMap. When a defined issue is detected, a notification is sent through a Slack Incoming Webhook. When the issue is resolved, the alert state is updated and a recovery notification is sent.
+
+The architecture description is available in `docs/architecture.md`, and the editable Draw.io source is available in `docs/architecture.drawio`.
 
 ## 4. REPOSITORY STRUCTURE
 
-`mern-project/client/`: React source code, Cypress tests, frontend Dockerfile and `nginx.conf`.
+Project source code, Kubernetes configuration, operational scripts, and submission documents are stored separately.
 
-`mern-project/server/`: Express API, MongoDB connection management, health checks and backend Dockerfile.
+```text
+.github/workflows/     GitHub Actions CI and image publishing workflow
+docs/                  Architecture, findings, backup/restore runbook, and evidence screenshots
+kubernetes/            Application, MongoDB, ETL, and monitoring manifests
+mern-project/          React frontend, Express backend, and Cypress tests
+monitoring/            Kubernetes status checks and Slack notification logic
+python-project/        ETL application that imports GitHub repository data into MongoDB
+scripts/               Local deployment, rollback, backup, restore, and verification scripts
+tests/                 Unit tests for ETL monitoring and recovery behavior
+backups/               Generated MongoDB backup archives and SHA-256 checksum files
+```
 
-`python-project/`: `ETL.py`, `requirements.txt`, ETL Dockerfile and ETL-specific documentation.
+Important files:
 
-`monitoring/`: `check-health.sh`, `evaluate_etl.py` and monitoring Dockerfile.
-
-`kubernetes/`: namespace, shared configuration and resource manifests for backend, frontend, MongoDB, ETL and monitoring.
-
-`.github/workflows/ci.yml`: GitHub Actions validation, E2E testing and image build/publish process.
-
-`scripts/deploy-local.sh`: local Kubernetes deployment using GHCR image tags with rollback on deployment failure.
-
-`scripts/backup.sh`: archive backups of the `sample_training` and `github_etl` databases.
-
-`scripts/restore.sh`: MongoDB restore with checksum verification and explicit confirmation.
-
-`tests/test_etl_recovery.py`: unit tests for ETL failure and recovery analysis.
-
-`docker-compose.yml`: local container environment and optional one-off ETL execution.
-
-`.env.example`: example Docker Compose environment variables.
-
-`docs/findings.md` and `docs/findings_en.md`: initial risks, applied improvements and scope boundaries.
-
-`docs/backup-restore.md`: backup/restore runbook; actual measurements and evidence references will be added before submission.
-
-`docs/screenshots/`: directory for required runtime evidence screenshots.
-
-`TESLIM_KANITLARI.md` and `SUBMISSION_EVIDENCE.md`: descriptions of evidence screenshots.
-
-`CASE_SONU_CEVAPLARI.md` and `CASE_END_ANSWERS.md`: answers to the final technical case questions.
-
-Files excluded by Git, including `node_modules`, build outputs, virtual environments, actual `.env`/Secret files and the `backups/` directory, are not part of the source submission.
+- `docker-compose.yml`: Runs the application locally with Docker Compose.
+- `.env.example`: Contains example variables for the Compose environment.
+- `docs/findings.md`: Explains identified issues in the starter projects, priorities, and applied improvements.
+- `docs/backup-restore.md`: Contains the backup/restore method, verification steps, retention, and RPO/RTO information.
+- `docs/architecture.png`: Kubernetes architecture diagram. Its explanation and editable source are available in `docs/architecture.md` and `docs/architecture.drawio`.
+- `docs/screenshots/`: Contains evidence for the web application, Docker, Kubernetes, ETL, CI/CD, rollback, backup/restore, security, and monitoring.
+- `TESLIM_KANITLARI.md`: Explains what each screenshot demonstrates.
+- `CASE_SONU_CEVAPLARI.md`: Contains Turkish answers to the technical case questions.
+- `CASE_END_ANSWERS.md`: Contains English answers to the technical case questions.
 
 ## 5. PREREQUISITES
 
-**For local setup:**
+### REQUIRED TOOLS
 
 - Git
-- Docker Desktop and the Docker Compose plugin
-- Docker Desktop must be running
-- kubectl and k3d for the Kubernetes setup
-- Internet access to retrieve GitHub repository information
+- Docker Desktop and Docker Compose
+- `kubectl` and `k3d` for the Kubernetes setup
+- Internet access for the GitHub API
 
-Node.js 22 and npm are needed for local Node.js development and Cypress testing. Python 3.11 is suitable for running the ETL outside Docker or running unit tests locally.
+Node.js 22 and npm are required for local frontend development and Cypress tests. Python 3.11 is required to run the ETL outside Docker or to run Python unit tests.
 
-The project has been validated on macOS with Docker Desktop. Commands use macOS/Linux shell syntax. Some utility commands may differ on other operating systems.
+The project was validated on macOS with Docker Desktop. Commands are written for a macOS/Linux terminal.
 
-**First step:**
+### CLONE THE PROJECT
 
 ```bash
 git clone https://github.com/iremsilay/devops-case.git
 cd devops-case
 ```
 
-## 6. QUICK START — DOCKER COMPOSE
+## 6. QUICK START: DOCKER COMPOSE
 
-Docker Compose is the simplest way to validate the full application in a local container network. It should not be considered the final deployment approach in place of Kubernetes.
+Docker Compose runs the frontend, backend, and MongoDB components in a local container environment. Kubernetes deployment is described in the relevant section of this README.
 
-### 6.1 Create the environment file
+### 6.1 ENVIRONMENT VARIABLES
 
-**From the project root:**
+Copy the example environment file in the project root:
 
 ```bash
 cp .env.example .env
 ```
 
-**Values in `.env`:**
+Values in the `.env` file:
 
 ```dotenv
 COMPOSE_MONGO_URI=mongodb://mongodb:27017
@@ -142,17 +127,17 @@ GITHUB_TOKEN=
 FRONTEND_PORT=8081
 ```
 
-Replace `GITHUB_USERNAME` with the GitHub account to be tested. Public repository information can be retrieved without a token, subject to GitHub API rate limits. If a real token is required, keep it only in the local `.env` file or a secure secret mechanism. Do not commit it to Git.
+Replace `GITHUB_USERNAME` with the GitHub account to use. Public repository information can be retrieved without a token, but GitHub API request limits apply. If a token is used, it must remain only in the local `.env` file and must not be committed to Git.
 
-### 6.2 Start the application
+### 6.2 START THE APPLICATION
 
 ```bash
 docker compose up -d --build
 ```
 
-This starts MongoDB, the backend and the frontend. Compose evaluates service dependencies by waiting for the MongoDB health check and backend readiness. The ETL service does not start automatically because it is defined under a profile.
+This command starts the MongoDB, backend, and frontend services. The ETL service is defined under a profile and does not start automatically.
 
-### 6.3 Check the services
+### 6.3 CHECK THE SERVICES
 
 ```bash
 docker compose ps
@@ -160,44 +145,54 @@ docker compose logs --tail=100 backend
 docker compose logs --tail=100 frontend
 ```
 
-Browser: `http://localhost:8081`
+Access the application at:
 
-If `FRONTEND_PORT` is changed, use the corresponding browser port. Compose port mapping is bound only to the `127.0.0.1` interface.
+```text
+http://localhost:8081
+```
 
-**Check the API through the Nginx proxy:**
+If `FRONTEND_PORT` is set to a different value, update the address accordingly. The Compose port mapping is accessible only from the local computer.
+
+Verify backend health checks through the Nginx reverse proxy:
 
 ```bash
 curl -i http://localhost:8081/api/healthcheck
 curl -i http://localhost:8081/api/healthcheck/ready
 ```
 
-Both endpoints should return HTTP 200 when healthy. The readiness response includes the value `READY`.
+Both endpoints return HTTP 200 when healthy. The readiness response also confirms that the MongoDB connection is available.
 
-### 6.4 Run the ETL once
+### 6.4 RUN THE ETL ONCE
 
 ```bash
 docker compose --profile etl run --rm etl
 ```
 
-The job retrieves repository information, writes it to MongoDB and exits when complete. When run again, it updates records with the same `github_id` rather than inserting duplicates.
+The ETL stores GitHub repository data in MongoDB and exits when complete. When the same repository is processed again, the existing record is updated using the `github_id` field instead of creating a new record.
 
-The ETL output reports `fetched`, `inserted`, `updated` and `unchanged` counts. This Compose command does not set up an hourly scheduler. Hourly scheduling is handled by the Kubernetes CronJob.
+The terminal output includes `fetched`, `inserted`, `updated`, and `unchanged` counters. This command runs the ETL once. Hourly ETL scheduling is provided by the `github-etl` CronJob in Kubernetes.
 
-### 6.5 Cleanup
+### 6.5 STOP THE ENVIRONMENT
 
 ```bash
 docker compose down
 ```
 
-This stops the containers and networks while preserving the named MongoDB volume. `docker compose down -v` removes the database volume and should be used only when data loss is intentional.
+This command removes containers and the network while preserving the MongoDB volume.
+
+```bash
+docker compose down -v
+```
+
+This command also deletes the MongoDB volume. Do not use it when the database data should be preserved.
 
 ## 7. KUBERNETES ENVIRONMENT AND INITIAL SETUP
 
-The final test environment is the local k3d cluster named `devops-case`, running on Docker Desktop. The kubectl context is `k3d-devops-case` and the Kubernetes namespace is `devops-case`.
+The Kubernetes deployment is prepared for the local `devops-case` k3d cluster running on Docker Desktop. The Kubernetes context is `k3d-devops-case`, and the namespace is `devops-case`.
 
-The procedure distinguishes initial setup of an empty cluster from updates to an existing running cluster. In particular, Secrets and the ConfigMap holding alert state should not be reapplied indiscriminately.
+This section describes the installation order for an empty cluster. Before reapplying Secrets or the `monitoring-state` ConfigMap in a running environment, check the current state.
 
-### 7.1 Check the cluster and context
+### 7.1 CHECK THE CLUSTER AND CONTEXT
 
 ```bash
 k3d cluster list
@@ -205,26 +200,19 @@ kubectl config current-context
 kubectl get nodes
 ```
 
-The project's `deploy-local.sh` script is configured to run only with the `k3d-devops-case` context. Use the name `devops-case` when creating a new cluster. k3d host port mapping must be configured during cluster creation. For example, the frontend NodePort 30080 cannot be expected to work in a local browser without a corresponding host port mapping.
+`deploy-local.sh` runs only in the `k3d-devops-case` context.
 
-**Example for creating a new cluster (do not run against the existing cluster):**
+When creating a new cluster, a host port mapping must be defined for the frontend NodePort:
 
 ```bash
 k3d cluster create devops-case --port '127.0.0.1:8081:30080@loadbalancer'
 ```
 
-This is an example command. Verify the actual port mapping of the existing cluster from its k3d configuration. Deleting and recreating an existing cluster may result in loss of MongoDB data.
+This command creates a new cluster. Deleting and recreating an existing cluster can cause MongoDB data loss.
 
-### 7.2 Prepare the images
+### 7.2 BUILD THE IMAGES
 
-**The initial Kubernetes manifests in the repository use local Docker image tags:**
-
-- `case-backend:1.0`
-- `case-frontend:1.0`
-- `case-etl:1.0`
-- `case-monitoring:1.1`
-
-**From the project root:**
+Kubernetes manifests use local Docker image tags by default. Build the images from the project root:
 
 ```bash
 docker build -t case-backend:1.0 ./mern-project/server
@@ -233,77 +221,66 @@ docker build -t case-etl:1.0 ./python-project
 docker build -t case-monitoring:1.1 ./monitoring
 ```
 
-**Import the images into the k3d cluster:**
+Import the images into the k3d cluster:
 
 ```bash
 k3d image import case-backend:1.0 case-frontend:1.0 case-etl:1.0 case-monitoring:1.1 -c devops-case
 ```
 
-Local development and releases use two different image management approaches.
+Images published to GHCR by GitHub Actions are applied with `scripts/deploy-local.sh` during a controlled release. This process is described in the CI/CD and rollback section of this README.
 
-**Local development:** The default Kubernetes manifests in the repository use the `case-backend:1.0`, `case-frontend:1.0` and `case-etl:1.0` tags. Images are built in the local Docker environment and imported into the cluster using `k3d image import`. This speeds up development and initial setup tests.
-
-**Release:** After successful checks, GitHub Actions publishes backend, frontend and ETL images to GHCR with a `sha-<commit-hash>` tag. `scripts/deploy-local.sh` uses the specified SHA-tagged images and updates the image references of running Kubernetes resources with `kubectl set image`.
-
-The deployment script does not modify the manifest files. New image references are applied to existing Deployment and CronJob resources through the Kubernetes API. This means the default YAML files in the repository can retain their local image tags while the running cluster uses GHCR images.
-
-The monitoring image is not managed by this release script and must be handled separately.
-
-Reapplying Kubernetes manifests with `kubectl apply` may reset image references to their default local tags. Reapply manifests carefully after a release.
-
-If images are not available in the cluster or cannot be pulled from GHCR, Pods may enter the `ImagePullBackOff` state.
-
-### 7.3 Namespace and shared ConfigMap
+### 7.3 APPLY THE NAMESPACE AND GENERAL CONFIGURATION
 
 ```bash
 kubectl apply -f kubernetes/namespace.yaml
 kubectl apply -f kubernetes/configmap.yaml
 ```
 
-The shared `app-config` ConfigMap contains the GitHub username and ETL collection settings. Update `GITHUB_USERNAME` if the account used for testing needs to change.
+The `app-config` ConfigMap contains the GitHub username and collection information for the ETL. If a different GitHub account is used, update `GITHUB_USERNAME` before starting the ETL.
 
-### 7.4 Prepare Kubernetes Secrets
+### 7.4 CREATE THE SECRETS
 
-Do not place actual passwords or connection URIs in the repository. The existing manifests depend on the following Secrets:
+Kubernetes manifests use the following Secrets:
 
-- `mongodb-auth`: initial username/password environment variables for the MongoDB root account and application users.
-- `backend-mongo-uri`: `ATLAS_URI` key containing a connection URI for a backend user authorized to access `sample_training`.
-- `etl-mongo-uri`: `ATLAS_URI` key containing a connection URI for an ETL user authorized to access `github_etl`.
-- `monitoring-slack-webhook`: `SLACK_WEBHOOK_URL` key.
+- `mongodb-auth`: Initial credentials for the MongoDB root account and application users.
+- `backend-mongo-uri`: Contains the `ATLAS_URI` key for the backend.
+- `etl-mongo-uri`: Contains the `ATLAS_URI` key for the ETL.
+- `monitoring-slack-webhook`: Contains the `SLACK_WEBHOOK_URL` key for Slack notifications.
 
-MongoDB application users are created by `init-mongo.js` during initialization. The script uses these variables:
+Prepare the local environment file used during the initial MongoDB setup. It must contain the following variables:
 
-`MONGO_BACKEND_USERNAME`, `MONGO_BACKEND_PASSWORD`,
-
-`MONGO_ETL_USERNAME`, `MONGO_ETL_PASSWORD`.
-
-The official MongoDB image also requires `MONGO_INITDB_ROOT_USERNAME` and `MONGO_INITDB_ROOT_PASSWORD` for the root account.
-
-**Create a local environment file excluded from Git, then create the Secret using:**
-
-```bash
-kubectl create secret generic mongodb-auth -n devops-case --from-env-file=kubernetes/secrets/mongodb.env
+```text
+MONGO_INITDB_ROOT_USERNAME
+MONGO_INITDB_ROOT_PASSWORD
+MONGO_BACKEND_USERNAME
+MONGO_BACKEND_PASSWORD
+MONGO_ETL_USERNAME
+MONGO_ETL_PASSWORD
 ```
 
-**Architecture note:** In this project, Secrets are created manually from `.env` files that are not tracked by Git to set up the local Kubernetes environment. This approach was selected for local development and technical assessment.
-
-In a real production environment, a centralized secret management solution such as AWS Secrets Manager, HashiCorp Vault or External Secrets Operator (ESO) should be used. These systems support controlled secret distribution, access management and rotation processes.
-
-Automatic secret rotation has not been implemented. Updates to Secret values and the rollout of Pods that need to consume the new values must be managed separately.
-
-This sample file must not be tracked by Git and must contain the six variables listed above. Use the same approach to securely create `backend-mongo-uri`, `etl-mongo-uri` and `monitoring-slack-webhook` Secrets with their respective keys. Passwords with special characters in MongoDB URIs may require URL encoding. Avoid exposing secrets in terminal output, screenshots or shell history.
-
-**Important:** The existence of Secret objects alone does not guarantee correct authorization. Backend and ETL users are intended to access only their respective databases.
-
-### 7.5 MongoDB initialization ConfigMap, StatefulSet and Service
-
-**Load the ConfigMap that will create application users on the first initialization of an empty database:**
+Create the `mongodb-auth` Secret:
 
 ```bash
-kubectl create configmap mongodb-init-script -n devops-case --from-file=init-mongo.js=kubernetes/mongodb/init-mongo.js
+kubectl create secret generic mongodb-auth \
+  -n devops-case \
+  --from-env-file=kubernetes/secrets/mongodb.env
 ```
 
-**Then run:**
+Create the backend, ETL, and Slack Secrets in the same namespace with the names and keys expected by the manifests.
+
+Do not commit actual passwords, connection URIs, or webhook addresses to Git. If a password in a MongoDB URI contains special characters, it must be URL-encoded. Pods do not automatically use updated Secret values; the required rollout must be performed separately.
+
+### 7.5 START MONGODB
+
+If MongoDB is being installed on an empty volume for the first time, add the user creation script as a ConfigMap:
+
+```bash
+kubectl create configmap mongodb-init-script \
+  -n devops-case \
+  --from-file=init-mongo.js=kubernetes/mongodb/init-mongo.js
+```
+
+Apply the MongoDB Service and StatefulSet:
 
 ```bash
 kubectl apply -f kubernetes/mongodb/service.yaml
@@ -311,9 +288,11 @@ kubectl apply -f kubernetes/mongodb/statefulset.yaml
 kubectl rollout status statefulset/mongodb -n devops-case --timeout=180s
 ```
 
-MongoDB runs in the `mongodb-0` Pod and uses the `mongo-data` PVC. The initialization script runs only when the database storage is first initialized. Deploying again with an existing PVC does not recreate users. Changing a Secret does not necessarily update database user passwords automatically, so password rotation must be planned separately.
+MongoDB runs in the `mongodb-0` Pod and stores data in the `mongo-data` PersistentVolumeClaim. `init-mongo.js` runs only when a new MongoDB volume is initialized. Reapplying it to an existing volume does not change user credentials.
 
-### 7.6 Frontend, backend and ETL resources
+### 7.6 START APPLICATION AND ETL RESOURCES
+
+After MongoDB is ready, apply the backend, frontend, and ETL resources:
 
 ```bash
 kubectl apply -f kubernetes/backend/service.yaml
@@ -323,19 +302,17 @@ kubectl apply -f kubernetes/frontend/deployment.yaml
 kubectl apply -f kubernetes/etl/cronjob.yaml
 ```
 
+Check the Deployment status:
+
 ```bash
 kubectl rollout status deployment/backend -n devops-case --timeout=180s
 kubectl rollout status deployment/frontend -n devops-case --timeout=180s
 kubectl get deployments,services,cronjobs -n devops-case
 ```
 
-The Kubernetes manifests define one replica each for the backend and frontend and a single MongoDB StatefulSet replica. This is not a high-availability architecture.
+One replica is defined for the backend and frontend, and one StatefulSet replica is defined for MongoDB. This local setup does not provide high availability.
 
-### 7.7 Monitoring resources
-
-Monitoring requires a ServiceAccount, restricted RBAC, a script ConfigMap, a state ConfigMap and a CronJob.
-
-**For initial setup:**
+### 7.7 START MONITORING RESOURCES
 
 ```bash
 kubectl apply -f kubernetes/monitoring/serviceaccount.yaml
@@ -346,62 +323,88 @@ kubectl apply -f kubernetes/monitoring/state-configmap.yaml
 kubectl apply -f kubernetes/monitoring/cronjob.yaml
 ```
 
-**Warning:** `state-configmap.yaml` contains initial state values. Reapplying it after monitoring has started can reset active alert state. Do not indiscriminately apply the entire monitoring directory to an existing cluster. Changes to the monitoring scripts must also be kept in sync with the scripts embedded in `configmap.yaml`.
+Monitoring runs with a limited-permission ServiceAccount. The `monitoring-state` ConfigMap stores the alert state.
 
-Slack notifications cannot be sent without the webhook Secret. Never include the webhook URL in a README or commit it to Git.
+`state-configmap.yaml` is intended only for the initial state. Reapplying it after monitoring has started can reset active alerts. The `monitoring-slack-webhook` Secret must be created before Slack notifications can be sent.
 
-### 7.8 Kubernetes access and general health checks
+### 7.8 POST-INSTALLATION CHECKS AND ACCESS
 
 ```bash
-kubectl get pods -n devops-case
-kubectl get deployments -n devops-case
-kubectl get services -n devops-case
-kubectl get cronjobs -n devops-case
-kubectl get pvc -n devops-case
+kubectl get pods,deployments,services,cronjobs,pvc -n devops-case
 ```
 
-Backend readiness can be checked from inside the cluster or through a suitable port-forward. Browser access depends on the k3d host port mapping.
-
-**For example, temporarily forward the frontend Service to local port 8082:**
+If the host port mapping is configured, access the application at `http://localhost:8081`. For temporary access, forward the frontend Service port:
 
 ```bash
 kubectl port-forward -n devops-case service/frontend 8082:8080
 ```
 
-This command keeps the terminal session occupied. Open `http://localhost:8082` from another terminal or browser. If NodePort port mapping is configured, the corresponding host port can be used directly.
+The application remains accessible at `http://localhost:8082` while this command is running.
 
-## 8. VERIFYING APPLICATION FUNCTIONALITY
+## 8. APPLICATION FUNCTIONALITY VALIDATION
 
-Create, list, edit and delete a record in the frontend. Verify that the record changes are reflected correctly in the interface. The backend `/record` API writes these operations to the `sample_training.records` collection.
+### 8.1 WEB APPLICATION AND HEALTH CHECKS
 
-**Health endpoints:**
+Creating, listing, updating, and deleting employee records were validated through the web interface. The backend stores records in the MongoDB `sample_training.records` collection.
 
-GET `/healthcheck`: checks whether the backend process responds to HTTP requests (liveness).
+Health checks are provided through two endpoints:
 
-GET `/healthcheck/ready`: verifies MongoDB connectivity (readiness). Returns HTTP 200 `READY` when healthy and HTTP 503 `NOT_READY` when MongoDB is unavailable.
+- `/healthcheck`: Liveness endpoint that checks whether the backend process is responding.
+- `/healthcheck/ready`: Readiness endpoint that checks whether the backend and MongoDB connection are available.
 
-During a MongoDB outage test, the backend process remained running and readiness returned 503. After MongoDB recovered, readiness returned to `READY` without restarting the backend. Readiness informs Kubernetes Service traffic routing decisions during temporary database issues. It does not guarantee immediate or uninterrupted service.
+When the frontend is accessed through port-forward, the checks can be run with:
 
-**Check the ETL Job:**
+```bash
+curl -i http://localhost:8082/api/healthcheck
+curl -i http://localhost:8082/api/healthcheck/ready
+```
+
+Both endpoints return HTTP 200 when healthy. When MongoDB is unavailable, `/healthcheck/ready` returns HTTP 503 and `NOT_READY`. Once MongoDB becomes available again, the backend returns to the `READY` state without requiring a restart.
+
+**Evidence:**
+
+![Web application home page](docs/screenshots/01-web-homepage.png)
+
+![Record creation form](docs/screenshots/02-web-create-form.png)
+
+![Successful record creation](docs/screenshots/03-web-create-success.png)
+
+![Before record update](docs/screenshots/04-web-edit-before.png)
+
+![Successful record update](docs/screenshots/05-web-edit-success.png)
+
+### 8.2 ETL UPDATE VALIDATION
+
+The ETL CronJob and its Jobs can be checked with:
 
 ```bash
 kubectl get cronjob github-etl -n devops-case
 kubectl get jobs -n devops-case
 ```
 
-**View logs for a specific successful Job:**
+To view the output of a specific Job:
 
 ```bash
-kubectl logs -n devops-case job/<actual-etl-job-name>
+kubectl logs -n devops-case job/<etl-job-name>
 ```
 
-The ETL runs at the beginning of each hour using the UTC schedule `0 * * * *`. Repository documents are inserted on the first run. Subsequent runs update records using the same `github_id`. The unique index prevents duplicate repository IDs. The `last_synced_at` field is updated with each successful upsert.
+The `github-etl` CronJob runs at the start of every hour in the UTC time zone (`0 * * * *`). The first run stores GitHub repository data in MongoDB. Subsequent runs update matching records through the unique `github_id` field.
 
-In a previous verification, a subsequent run returned `fetched=3`, `inserted=0` and `updated=3` for three repositories. This count reflects the GitHub account at the time of the test and is not a fixed value.
+During validation, the same three repositories were processed a second time. The second run returned `fetched=3`, `inserted=0`, `updated=3`, and `unchanged=0`. The total number of records in the collection remained three. The unique index on `github_id` prevents duplicate records for the same repository.
+
+The repository count may vary based on the selected GitHub account.
+
+**Evidence:**
+
+![Initial ETL execution and MongoDB records](docs/screenshots/11-etl-first-import.png)
+
+![Repeated ETL execution and upsert result](docs/screenshots/14-etl-upsert-result.png)
+
+![Unique index and record count](docs/screenshots/15-etl-unique-index.png)
 
 ## 9. TESTS AND QUALITY CHECKS
 
-### 9.1 Frontend build
+### 9.1 FRONTEND PRODUCTION BUILD
 
 ```bash
 cd mern-project/client
@@ -409,7 +412,9 @@ npm ci
 npm run build
 ```
 
-### 9.2 Backend checks
+This command creates the production build output for the React application.
+
+### 9.2 BACKEND CHECKS
 
 ```bash
 cd mern-project/server
@@ -418,283 +423,712 @@ npm audit --omit=dev --audit-level=high
 node --check server.mjs
 ```
 
-If commands are not being run from the project root, make sure to switch to the appropriate directory.
+`npm audit` checks known security vulnerabilities in production dependencies. `node --check` validates the JavaScript syntax of the backend file.
 
-### 9.3 Cypress E2E
+### 9.3 CYPRESS END-TO-END TESTS
 
-Cypress tests run while the frontend and backend are available. GitHub Actions runs them with MongoDB, backend and frontend containers created in its own Docker network. For a local frontend development server:
+Cypress tests run while the frontend and backend are available:
 
 ```bash
 cd mern-project/client
 npx cypress run --e2e
 ```
 
-The default local Cypress `baseUrl` is `http://localhost:3000`. If the application is served on a different port, the test `baseUrl` must be adjusted accordingly. CI uses `http://localhost:8082`.
+The default address in the local Cypress configuration is `http://localhost:3000`. If the application runs on a different port, update the `baseUrl` value accordingly.
 
-The original record creation test failed because it looked for the record on the wrong page. After correcting the page selection, both existing Cypress tests passed.
+GitHub Actions runs Cypress tests with MongoDB, backend, and frontend containers in a Docker network independent from the target Kubernetes cluster. The original record creation test failed because it searched for the record on the wrong page. After updating the test to check the `/records` page, both Cypress tests passed.
 
-### 9.4 Unit tests for Python ETL analysis
+### 9.4 MONITORING AND ETL RECOVERY UNIT TESTS
 
-**From the project root:**
+Run from the project root:
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Six tests cover distinguishing older and newer ETL failures, recovery, CronJobs with no successful execution, missing failure timestamps and filtering failures belonging to another CronJob. All six tests passed. This does not mean that 100% code coverage has been measured for the module.
+The six unit tests cover the monitoring logic that evaluates ETL Job results. They validate distinguishing older and newer ETL failures, recovery after a successful run, no successful Job being available, missing failure timestamps, and filtering failures belonging to another CronJob.
 
-### 9.5 Dependency security checks
+Passing all six tests confirms these scenarios. Full code coverage has not been measured.
 
-The initial `npm audit` reports identified 11 vulnerabilities in the backend and 89 in the frontend. After improvements, a local check reported 0 remaining backend vulnerabilities and 33 frontend vulnerabilities. These are historical measurements. Run the audits again to determine the current state. The production frontend container uses an Nginx image without Node.js build dependencies, but build-time and supply-chain risks are not entirely eliminated.
+### 9.5 DEPENDENCY SECURITY CHECK
+
+Initially, `npm audit` reported 11 vulnerabilities in the backend and 89 in the frontend. After dependency updates, no backend vulnerabilities remained; the latest local frontend check reported 33 remaining vulnerabilities.
+
+These values are historical measurements. Run the audit commands again to determine the current result.
+
+The final frontend container image does not contain Node.js dependencies; it serves built static files through Nginx. However, residual risks related to frontend build dependencies and the software supply chain are not fully eliminated. Remaining dependency risks are described in `docs/findings.md`.
+
+### 9.6 CONTAINER IMAGE SECURITY SCANNING AND SBOM
+
+The CI pipeline performs Trivy security scanning and generates CycloneDX-format SBOMs for backend, frontend, and ETL images.
+
+The scan reports known `HIGH` and `CRITICAL` vulnerabilities. Trivy reports and SBOM files are retained as GitHub Actions artifacts for 14 days.
+
+| Artifact | Contents |
+| --- | --- |
+| `security-backend` | `trivy-backend.json`, `sbom-backend.json` |
+| `security-frontend` | `trivy-frontend.json`, `sbom-frontend.json` |
+| `security-etl` | `trivy-etl.json`, `sbom-etl.json` |
+
+In the workflow run on 10 November 2026, the `Security - backend`, `Security - frontend`, and `Security - etl` jobs completed successfully.
+
+[GitHub Actions Run #13](https://github.com/iremsilay/devops-case/actions/runs/42861106121)
+
+The scan is intended for reporting. Detected vulnerabilities do not automatically fail the CI workflow. Scanning runs against images built in the CI environment and does not directly scan the image digest published to GHCR. Image signing, policy as code, and vulnerability-based publishing blocks are not implemented.
+
+**Evidence:**
+
+![Successful Security jobs](docs/screenshots/43-security-jobs-success.png)
+
+![Trivy scan and SBOM generation](docs/screenshots/44-security-trivy-scan.png)
+
+![Security reports and SBOM artifacts](docs/screenshots/45-security-artifacts.png)
 
 ## 10. CI/CD AND RELEASE MANAGEMENT
 
-`.github/workflows/ci.yml` is triggered by pushes to `main`, pull requests targeting `main` and `workflow_dispatch`.
+The CI process performs validation, testing, and container image publishing through GitHub Actions. Deployment to the local Kubernetes cluster is performed in a controlled manner through `scripts/deploy-local.sh`.
 
-**Pipeline stages:**
+### 10.1 CI PIPELINE
 
-1. Backend: `npm ci`, production dependency audit and Node.js syntax validation.
-2. Frontend: `npm ci` and React production build with `CI=true`.
-3. Python ETL: install requirements, run `py_compile` and verify imports of `requests` and `pymongo`.
-4. Cypress: start MongoDB, backend and frontend with Docker, then run E2E tests. Cypress tests run in a temporary isolated Docker environment on the GitHub Actions runner rather than in the target Kubernetes cluster.
+The workflow defined in `.github/workflows/ci.yml` runs in the following situations:
 
-The pipeline creates a separate `case-ci` network using `docker network create`. MongoDB, backend and frontend containers start in this network. Cypress tests run after backend readiness and frontend API access have been verified.
+- Pushes to the `main` branch
+- Pull requests targeting the `main` branch
+- Manual execution through `workflow_dispatch`
 
-This approach prevents tests from changing data or running services in the target Kubernetes cluster. It also provides an independent test environment for each CI execution.
+The pipeline performs the following checks:
 
-If the tests fail, relevant container logs and any Cypress screenshots are saved for investigation.
+1. Installs backend dependencies, audits production dependencies, and checks JavaScript syntax.
+2. Installs frontend dependencies and creates a production build.
+3. Installs Python ETL dependencies, compiles the file, and verifies required modules.
+4. Runs Cypress E2E tests with MongoDB, backend, and frontend containers.
+5. Builds backend, frontend, and ETL images for `linux/amd64` and `linux/arm64` after successful checks.
+6. Publishes images to GHCR on pushes to the `main` branch.
 
-This stage validates the application's E2E behavior in a container environment. It does not test every aspect of Kubernetes deployment or orchestration.
+Container image security scanning and SBOM generation run in separate Security jobs. Their scope and evidence are described in [9.6 CONTAINER IMAGE SECURITY SCANNING AND SBOM](#96-container-image-security-scanning-and-sbom).
 
-5. Docker: if the previous checks pass, build backend, frontend and ETL images for `linux/amd64` and `linux/arm64`. Publish them to GHCR on pushes to `main`.
+#### CYPRESS TEST ENVIRONMENT
 
-**GHCR image names:**
+Cypress tests run in a temporary Docker environment created on the GitHub Actions runner, not in the target Kubernetes cluster. The pipeline creates a separate `case-ci` network for MongoDB, backend, and frontend containers.
+
+Before Cypress starts, backend readiness and API access through the frontend are verified. When a test fails, container logs and Cypress screenshots, when available, are stored as artifacts.
+
+This environment prevents tests from affecting services or data in the local Kubernetes cluster. It does not test all Kubernetes orchestration behavior.
+
+#### FAIL-FAST BEHAVIOR
+
+The Docker image build and publishing stage depends on successful `backend`, `frontend`, `etl`, and `cypress` jobs. If any of these jobs fails, the Docker job does not run.
+
+This behavior was verified with temporary Pull Request #1 from the `test/ci-fail-fast` branch to `main`. A deliberately failing `FAIL_FAST_TEST_ELEMENT` assertion was added to the Cypress test.
+
+| Check | Result |
+| --- | --- |
+| Backend validation | Successful |
+| Frontend build | Successful |
+| Python ETL validation | Successful |
+| Cypress E2E | Failed |
+| Docker build/publish | Skipped |
+
+- [Pull Request #1 — CI fail-fast test](https://github.com/iremsilay/devops-case/pull/1)
+- Test commit: `4cd5e7d`
+
+![Failed Cypress and skipped Docker job in the fail-fast test](docs/screenshots/22-cicd-fail-fast.png)
+
+![Deliberate Cypress assertion error](docs/screenshots/23-cicd-fail-fast-log.png)
+
+The test was performed only on the temporary branch. The failing assertion was not included in the `main` branch.
+
+### 10.2 SUCCESSFUL CI RUN
+
+The `CI - MERN and ETL` workflow completed successfully after a push to the `main` branch.
+
+| Information | Value |
+| --- | --- |
+| Workflow | CI - MERN and ETL (#9) |
+| Commit | `b5873c8` |
+| Result | Success |
+| Duration | 3 minutes 11 seconds |
+
+Backend validation, frontend build, Python ETL validation, Cypress E2E, and Docker build jobs completed successfully.
+
+![Successful CI pipeline](docs/screenshots/12-cicd-pipeline-success.png)
+
+![Successful CI validation and Docker build jobs](docs/screenshots/13-cicd-jobs-success.png)
+
+### 10.3 GHCR IMAGE PUBLISHING
+
+The following images are published to GHCR after successful pushes to `main`:
 
 - `ghcr.io/iremsilay/devops-case-backend`
 - `ghcr.io/iremsilay/devops-case-frontend`
 - `ghcr.io/iremsilay/devops-case-etl`
 
-Image tags: `latest` and `sha-<40-character-commit-hash>`.
+Two tags are used for each image:
 
-The Docker stage depends on the backend, frontend, ETL and Cypress jobs. If any of these four jobs fails, the Docker publication stage does not start. Pull request validation builds images but does not push them to the registry.
+- `latest`: Most recently published version
+- `sha-<40-character-commit-hash>`: Version associated with a specific commit
 
-Not deploying directly from GitHub Actions is a deliberate decision to isolate the local cluster. Instead of exposing the cluster to a GitHub-hosted runner, image publication and cluster release operations are kept separate. This is not a GitOps implementation and should not be described as fully automated continuous deployment.
+The SHA tag allows a specific CI output to be selected during deployment.
 
-**To deploy a published SHA-tagged image release to the local cluster:**
+![Docker images published on GHCR](docs/screenshots/20-cicd-ghcr-images.png)
+
+The backend image was verified as published with the `latest` and `sha-b5873c8b85f31885109fb038f517e18f06601448` tags. The SHA tag matches the commit from the successful CI workflow.
+
+![GHCR backend image tag details](docs/screenshots/21-cicd-ghcr-image-tags.png)
+
+### 10.4 LOCAL KUBERNETES DEPLOYMENT
+
+GitHub Actions does not deploy directly to the local Kubernetes cluster. Image publishing and deployment are separated instead of exposing the local cluster to a GitHub-hosted runner.
+
+For this reason, the solution is not described as fully automated CD or GitOps. A release to the local cluster is started manually with:
 
 ```bash
-./scripts/deploy-local.sh sha-<40-character-git-commit-hash>
+./scripts/deploy-local.sh sha-<40-character-commit-hash>
 ```
 
-`deploy-local.sh` runs only in the `k3d-devops-case` Kubernetes context and accepts image tags in the `sha-<commit-hash>` format with a 40-character Git commit SHA.
+The script runs only in the `k3d-devops-case` context. It updates the backend Deployment, frontend Deployment, and ETL CronJob image references in sequence. If the backend or frontend rollout fails, subsequent resources are not updated.
 
-The script first records the current image references of the backend Deployment, frontend Deployment and ETL CronJob.
+The following release to the local cluster was successfully verified:
 
-It then updates backend and frontend images sequentially to the new GHCR releases using `kubectl set image`. It checks each Deployment rollout with `kubectl rollout status --timeout=180s`. If both succeed, it updates the ETL CronJob image.
+| Information | Value |
+| --- | --- |
+| Namespace | `devops-case` |
+| Previous version | `sha-92683629ca434accfb946cb255ad97eb0e4f4bc5` |
+| New version | `sha-b5873c8b85f31885109fb038f517e18f06601448` |
+| Method | `scripts/deploy-local.sh` |
+| Result | Successful |
 
-If any command fails, the Bash `ERR` trap invokes the rollback function. This function reapplies the previously recorded image references to the backend, frontend and ETL resources using `kubectl set image`. It then checks the backend and frontend rollout status again.
+![Kubernetes state before deployment](docs/screenshots/24-cd-before-deployment.png)
 
-If commands fail during rollback, the script issues a warning and manual investigation is required. The mechanism provides a controlled attempt to return to the previous version but cannot guarantee automatic recovery under every condition.
+```bash
+./scripts/deploy-local.sh sha-b5873c8b85f31885109fb038f517e18f06601448
+```
 
-Updating the ETL CronJob image does not by itself prove that the new ETL version works. The result of a subsequent ETL Job must be verified separately.
+![Successful Kubernetes deployment](docs/screenshots/25-cd-deployment-success.png)
 
-This script performs a manual release operation. The specified SHA-tagged images must exist in GHCR and be pullable by the cluster. If image pulling requires authentication, an appropriate Kubernetes `imagePullSecret` must also be configured.
+After deployment, backend and frontend were `1/1 Ready`, and related Pods were in the `Running` state. Backend, frontend, and ETL image references were verified as updated to the new SHA version.
 
-## 11. MONITORING, LOGGING AND SLACK ALERTS
+![Image and Pod validation after deployment](docs/screenshots/26-cd-rollout-success.png)
 
-The `monitoring-check` Kubernetes CronJob runs every minute. It inspects the number of available backend Deployment replicas and the status of the `github-etl` CronJob and Jobs through the Kubernetes API.
+### 10.5 ROLLBACK
 
-**Alert types:**
+Before deployment, `deploy-local.sh` records the image references of backend, frontend, and ETL resources. If a command fails, the Bash `ERR` trap runs the rollback function.
 
-`BACKEND_UNAVAILABLE`: the number of available backend replicas is below the expected value.
+Rollback reapplies the previous image references using `kubectl set image` and checks backend and frontend rollout status again. Manual investigation may be required if there is a cluster or image access issue.
 
-`ETL_OVERDUE`: the last successful ETL execution is older than the configured threshold, currently 4,500 seconds (75 minutes).
+The rollback mechanism was tested with an image tag that does not exist in GHCR:
 
-`ETL_JOB_FAILED`: an ETL Job created by the CronJob has failed after the most recent successful ETL execution.
+| Information | Value |
+| --- | --- |
+| Healthy version | `sha-b5873c8b85f31885109fb038f517e18f06601448` |
+| Invalid test version | `sha-0000000000000000000000000000000000000000` |
+| Expected error | Backend rollout timeout |
+| Result | Automatic rollback completed |
 
-`ETL_NO_SUCCESS`: the ETL has no recorded successful execution.
+```bash
+./scripts/deploy-local.sh sha-0000000000000000000000000000000000000000
+```
 
-`ETL_SUSPENDED`: the ETL CronJob is suspended.
+![Failed deployment and rollback process](docs/screenshots/27-cd-rollback-trigger.png)
 
-Each alert type stores its active state and the last notification timestamp in the `monitoring-state` ConfigMap. The initial alert is sent to Slack. For ongoing issues, an independent 900-second (15-minute) throttling interval is applied. When the problem is resolved, a `RESOLVED` message is sent and the alert state is cleared. A failed webhook delivery is not recorded as a successful notification. ConfigMap updates use a `resourceVersion` precondition to reject updates based on stale state. This does not guarantee the elimination of every concurrent notification race.
+![Image and Pod state after rollback](docs/screenshots/28-cd-rollback-success.png)
 
-`monitoring/evaluate_etl.py` evaluates Job `ownerReferences` and failure timestamps to prevent failures older than the most recent successful ETL run from triggering new alerts. Six unit tests have been implemented for this module.
+Rollback only restores image references. It does not restore database data or schema changes. After updating or reverting the ETL image, the result of the next ETL Job must be checked separately.
 
-**Inspection commands:**
+### 10.6 LIMITATIONS
+
+- Kubernetes deployment is not triggered automatically by GitHub Actions.
+- The SHA tag must exist in GHCR and be accessible to the cluster.
+- If private image access is required, an appropriate `imagePullSecret` must be configured.
+- Cypress tests run in an isolated Docker environment and do not cover all Kubernetes deployment behavior.
+
+## 11. MONITORING, LOGGING, AND SLACK ALERTS
+
+The `monitoring-check` CronJob runs every minute. It checks the available replica status of the backend Deployment, the `github-etl` CronJob, and ETL Job results through the Kubernetes API.
+
+### 11.1 ALERT TYPES
+
+| Alert | Condition |
+| --- | --- |
+| `BACKEND_UNAVAILABLE` | The desired backend replica count is zero or the available replica count is below the desired value |
+| `ETL_OVERDUE` | The most recent successful ETL execution exceeds 4500 seconds, or 75 minutes |
+| `ETL_JOB_FAILED` | A failed ETL Job exists after the most recent successful ETL execution |
+| `ETL_NO_SUCCESS` | No successful ETL execution record exists |
+| `ETL_SUSPENDED` | The `github-etl` CronJob is suspended |
+
+The active state and last notification time for each alert are stored in the `monitoring-state` ConfigMap. The first alert is sent to Slack. For ongoing issues, a notification limit of 900 seconds, or 15 minutes, is applied to each alert.
+
+When an issue is resolved, the alert state is cleared and a `RESOLVED` notification is sent to Slack. If the webhook request fails, the notification is not considered successful.
+
+ConfigMap updates use `resourceVersion` to reject updates based on stale state. This control does not completely prevent all concurrent notification races.
+
+`monitoring/evaluate_etl.py` evaluates Job `ownerReferences` and failure timestamps. This prevents failures that occurred before the most recent successful ETL execution from being evaluated as new alerts. This logic is covered by six unit tests.
+
+### 11.2 CHECK COMMANDS
 
 ```bash
 kubectl get cronjob monitoring-check -n devops-case
 kubectl get jobs -n devops-case
-kubectl logs -n devops-case job/<actual-monitoring-job-name>
+kubectl logs -n devops-case job/<monitoring-job-name>
 ```
 
-**Inspect alert state:**
+To inspect active alert state:
 
 ```bash
 kubectl get configmap monitoring-state -n devops-case -o yaml
 ```
 
-**Important:** ConfigMap output contains alert metadata, not Secret values. There is no need to read, log or share the Slack webhook Secret value.
+`monitoring-state` contains only alert metadata. The Slack webhook value is stored in a Secret and must not be read, logged, or shared.
 
-Backend and ETL failure, throttling, repeated notification and `RESOLVED` scenarios have been tested in the local Kubernetes environment. After testing, temporary test CronJobs and Jobs were removed, automatic monitoring was re-enabled and healthy logs were observed.
+### 11.3 VERIFIED BACKEND ALERT SCENARIO
 
-**Limitation:** If the cluster or Kubernetes API becomes entirely unavailable, the monitoring CronJob running inside the cluster may be unable to send notifications. External cluster availability monitoring has not been implemented. This version also does not include Prometheus/Grafana or centralized log storage.
+Backend availability, Slack notification, notification throttling, and recovery behavior were tested in a controlled local Kubernetes environment.
 
+During the test, the backend was temporarily scaled down to zero replicas. Monitoring detected this state as a `BACKEND_UNAVAILABLE` alert. The alert was verified as active in the `monitoring-state` ConfigMap, and the Slack notification was confirmed.
+
+A repeated check did not send a new Slack notification and returned `ALERT_THROTTLED`. After the backend was scaled back to one replica, the Deployment returned to the `1/1 Available` state. Monitoring cleared the alert and sent a `RESOLVED` notification to Slack.
+
+| Check | Result |
+| --- | --- |
+| Normal backend state | `1/1`, `BACKEND_HEALTHY` |
+| Failure state | `0/0`, `BACKEND_UNAVAILABLE` |
+| Alert record | `active:true` |
+| Slack alert | `BACKEND_UNAVAILABLE` notification sent |
+| Repeated check | `ALERT_THROTTLED` |
+| Recovery | Backend `1/1`, monitoring healthy |
+| Cleared alert | `active:false`, `last_sent:0` |
+| Slack recovery notification | `RESOLVED` sent |
+
+During testing, the previous backend check was found to treat the `0/0` state as healthy. The condition was updated as follows:
+
+```bash
+if (( desired == 0 || available < desired )); then
+```
+
+The updated script was added to the `monitoring-script` ConfigMap and verified through the controlled test.
+
+### 11.4 TEST COMMANDS
+
+To create a backend failure and run a monitoring Job manually:
+
+```bash
+kubectl scale deployment backend -n devops-case --replicas=0
+kubectl get deployment backend -n devops-case
+
+kubectl create job monitoring-backend-test \
+  --from=cronjob/monitoring-check \
+  -n devops-case
+
+kubectl logs -n devops-case job/monitoring-backend-test
+
+kubectl get configmap monitoring-state \
+  -n devops-case \
+  -o jsonpath='{.data.BACKEND_UNAVAILABLE}'
+```
+
+Restore the backend after the test:
+
+```bash
+kubectl scale deployment backend -n devops-case --replicas=1
+kubectl rollout status deployment/backend \
+  -n devops-case --timeout=180s
+```
+
+After testing, temporary Job resources were removed, automatic monitoring was re-enabled, and healthy monitoring results were verified.
+
+### 11.5 EVIDENCE
+
+![Monitoring and service health status](docs/screenshots/49-observability-monitoring-health.png)
+
+![Healthy monitoring logs](docs/screenshots/50-observability-monitoring-logs.png)
+
+![Backend failure and alert detection](docs/screenshots/51-observability-backend-alert.png)
+
+![Slack backend alert](docs/screenshots/52-observability-slack-alert.png)
+
+![Backend recovery](docs/screenshots/53-observability-recovery.png)
+
+![Slack RESOLVED notification](docs/screenshots/54-observability-slack-resolved.png)
+
+### 11.6 LIMITATIONS
+
+This validation covers the alert, notification throttling, and recovery flow for backend availability. It does not mean that all ETL alert conditions or cluster-level failures were tested end to end.
+
+If the cluster or Kubernetes API becomes completely unavailable, the monitoring CronJob running inside the cluster may not be able to send notifications. Prometheus/Grafana, centralized log collection, and external cluster availability monitoring are not implemented in this version.
+
+```markdown
 ## 12. MONGODB BACKUP AND RESTORE
 
-`scripts/backup.sh` and `scripts/restore.sh` are used for the MongoDB `sample_training` and `github_etl` databases. The commands operate on the `mongodb-0` Pod in the Kubernetes `devops-case` namespace. These scripts do not target the Docker Compose MongoDB container.
+`scripts/backup.sh` and `scripts/restore.sh` are used for the `sample_training` and `github_etl` MongoDB databases. The scripts work with the `mongodb-0` Pod in the Kubernetes `devops-case` namespace and do not target the Docker Compose MongoDB container.
 
-**Run the backup from the project root:**
+The detailed runbook, RPO/RTO targets, and retention approach are available in `docs/backup-restore.md`.
+
+### 12.1 TAKE A BACKUP
+
+Run from the project root:
 
 ```bash
 ./scripts/backup.sh
 ```
 
-**The script creates a `backups/YYYYMMDDTHHMMSSZ/` directory containing:**
+The script archives both databases with `mongodump` and creates a `backups/YYYYMMDDTHHMMSSZ/` directory for each execution.
 
-- `sample_training.archive`
-- `github_etl.archive`
-- `SHA256SUMS`
+```text
+backups/<timestamp>/
+├── sample_training.archive
+├── github_etl.archive
+└── SHA256SUMS
+```
 
-The `mongodump` output is transferred to the host computer as archive files. The script treats empty archives and failed dump operations as errors. The directory is created with `700` permissions, files with `600` permissions and the checksum list is calculated using SHA-256.
+Archives are copied from the Kubernetes Pod to the local computer. Empty archives or failed dump operations are treated as errors. The backup directory is created with `700` permissions and files with `600` permissions.
 
-**Restore:**
+To verify archive integrity:
+
+```bash
+(cd backups/<timestamp> && shasum -a 256 -c SHA256SUMS)
+```
+
+### 12.2 RESTORE
 
 ```bash
 ./scripts/restore.sh backups/<timestamp>
 ```
 
-The script first verifies archive checksums using `shasum -a 256 -c SHA256SUMS`. It then asks the user to enter `RESTORE` to confirm the operation. Because `mongorestore --drop` is used, existing data in the target collections is removed before backup data is loaded. Do not apply this procedure casually to production data.
+The script verifies SHA-256 checksums before restoring and requires the user to enter `RESTORE` for confirmation.
 
-The end-to-end verification scenario is: create a record through the interface, take a backup, drop the relevant collection, confirm that the record disappears from both the interface and MongoDB, restore the archive and verify that the same record returns. This scenario was tested during development. Submission evidence must also be provided under `docs/screenshots/` and in `TESLIM_KANITLARI.md`.
+Restore uses `mongorestore --drop`. Existing data in target collections is deleted and replaced with the backup data. Changes made after the backup was taken may be lost during restore.
 
-The local backup directory is outside the Kubernetes cluster, but it is not independent off-site protection against physical disk loss on the same computer. This version has no automated backup scheduler, encrypted remote object storage or automatic retention cleanup. The actual measured RTO, chosen RPO/RTO targets and retention policy must be documented separately in `docs/backup-restore.md`. Estimates or targets must not be presented as measured test results.
+### 12.3 END-TO-END BACKUP AND RESTORE VALIDATION
 
-## 13. ROLLBACK, CLEANUP AND SECURITY
+Backup and restore were tested in the local Kubernetes environment on 10 November 2026.
 
-### 13.1 Rollback
+| Information | Value |
+| --- | --- |
+| Kubernetes context | `k3d-devops-case` |
+| Namespace | `devops-case` |
+| MongoDB Pod | `mongodb-0` |
+| Frontend | `http://localhost:8082/records` |
+| Backup directory | `backups/20261110T161624Z` |
+| Test record | `Backup Test` |
 
-During a failed release, `deploy-local.sh` performs a rollback using the backend, frontend and ETL image references recorded before deployment.
+The ETL CronJob was temporarily suspended during the test to prevent new data from being written.
 
-Instead of using `kubectl rollout undo`, it reapplies the previous image versions with `kubectl set image`. After rollback, it uses `kubectl rollout status` for the backend and frontend to check whether the previous versions have become available again.
+#### 1. CREATE A RECORD
 
-If rollback fails, the script produces a warning and manual intervention is required. This operation does not automatically revert database contents or schemas.
+The following employee record was created through the React interface:
 
-Failures detected after deployment has already completed do not automatically trigger rollback. In that case, the previous working Git commit SHA can be identified and `scripts/deploy-local.sh` can be run again with the older release tag.
+| Field | Value |
+| --- | --- |
+| Name | `Backup Test` |
+| Position | `Backup Test` |
+| Level | `Junior` |
 
-Restoring the ETL CronJob image reference alone is not sufficient. The next ETL Job must also be checked for successful execution.
+The record was verified in the React interface and in the MongoDB `sample_training.records` collection. Before the backup, the collection contained two records: `Backup Test` and `Employee1`.
 
-### 13.2 Safe cleanup
+![Test record created in the React interface](docs/screenshots/35-backup-ui-record-created.png)
 
-Use `docker compose down` to remove Compose containers. The `-v` option deletes the database volume.
+#### 2. BACKUP AND INTEGRITY VALIDATION
 
-In Kubernetes, deleting a namespace may cause loss of MongoDB PVC data and other cluster resources. Do not delete the `devops-case` namespace without taking a backup first. Deleting the entire cluster is not recommended as a routine cleanup step.
+```bash
+./scripts/backup.sh
+```
 
-After temporary monitoring tests, remove the test Jobs and CronJobs, restore `monitoring-check` to `suspend=false` and verify that test alert states have been cleared. Do not reset the `monitoring-state` ConfigMap during normal operation.
+The backup was stored in `backups/20261110T161624Z`. Three documents from the `sample_training` database and three documents from the `github_etl.repositories` collection were backed up.
 
-### 13.3 Security approach
+Checksum validation succeeded for both archives:
 
-- Actual passwords, tokens and Slack webhook URLs are not included in the repository or container images.
-- Kubernetes Secrets store sensitive values while ConfigMaps store non-sensitive configuration.
-- The backend and ETL use separate MongoDB users with access to their respective databases.
-- Backend, frontend and ETL containers avoid unnecessary root privileges. Monitoring uses a read-only root filesystem and a restricted ServiceAccount.
-- The backend ClusterIP Service and MongoDB headless Service are not directly exposed externally. The frontend NodePort is the external entry point.
-- CI performs a production dependency audit. Remaining frontend dependency warnings are explained in `docs/findings.md`.
+```text
+sample_training.archive: OK
+github_etl.archive: OK
+```
 
-**Risks:** CORS is configured broadly, API input validation is incomplete, the cluster runs on a single node with one MongoDB replica and automatic secret rotation and NetworkPolicy have not been implemented. Additional work is required for real production use.
+![Backup creation and SHA-256 verification](docs/screenshots/36-backup-ui-created.png)
 
-## 14. COMMON ISSUES AND TROUBLESHOOTING
+#### 3. DROP THE COLLECTION
 
-**The frontend opens but API requests fail:**
+To simulate data loss, the `sample_training.records` collection was dropped.
 
-- Confirm that the frontend sends requests to `/api`.
-- Check the backend Deployment and readiness status.
-- Inspect the `case-backend` Service name in the Nginx reverse proxy configuration and the corresponding Service in the same namespace.
-- Check the cluster port mapping or `kubectl port-forward` configuration.
+```text
+RECORDS BEFORE DROP:
+2
 
-**The backend is not READY:**
+COLLECTION DROPPED:
+true
 
-- Check MongoDB Pod/PVC status and MongoDB logs.
-- Confirm that the `backend-mongo-uri` Secret exists and that the MongoDB user has the required permissions. Do not disclose Secret values.
-- Evaluate `/healthcheck` and `/healthcheck/ready` separately.
+RECORDS AFTER DROP:
+0
+```
 
-**A Pod is in `ImagePullBackOff`:**
+![Dropping the MongoDB records collection](docs/screenshots/37-backup-records-dropped.png)
 
-- Check whether local `case-*` images have been imported into k3d.
-- Confirm that the GHCR image tag exists and registry access is available.
-- Inspect image pull events in the Pod description.
+#### 4. VERIFY DATA LOSS
 
-**ETL is not running:**
+After the collection was dropped, the `Backup Test` and `Employee1` records were no longer visible in the React interface.
 
-- Confirm that the `github-etl` CronJob has `suspend=false`.
-- Inspect recent Job logs and Kubernetes Job status/conditions.
-- Check the GitHub username, API rate limits and MongoDB connectivity.
+![Data loss in the React interface](docs/screenshots/38-backup-ui-data-lost.png)
 
-**Slack notifications are not arriving:**
+The MongoDB query also confirmed that the test record was missing and that the total record count was zero:
 
-- Check the `monitoring-check` CronJob and latest Job logs.
-- Confirm that the `monitoring-slack-webhook` Secret exists.
-- Inspect the active alert state and throttling timestamp in `monitoring-state`.
-- Compare `WEBHOOK_FAILED` and `WEBHOOK_SENT` logs. Do not print the webhook value.
+```text
+BACKUP TEST AFTER DELETION:
+null
 
-**Backup or restore fails:**
+TOTAL RECORDS:
+0
+```
 
-- Confirm that the `mongodb-0` Pod is ready.
-- Verify that authorized MongoDB accounts are configured.
-- Inspect `SHA256SUMS` verification and the presence of archive files.
-- Remember that the `--drop` option modifies existing data during restore.
+![Data loss validation in MongoDB](docs/screenshots/39-backup-db-data-lost.png)
+
+#### 5. RESTORE AND DURATION MEASUREMENT
+
+```bash
+/usr/bin/time -p ./scripts/restore.sh backups/20261110T161624Z
+```
+
+A total of six documents were restored across the two databases without errors.
+
+| Database | Restored documents | Failed documents |
+| --- | ---: | ---: |
+| `sample_training` | 3 | 0 |
+| `github_etl` | 3 | 0 |
+| **Total** | **6** | **0** |
+
+```text
+Restore completed successfully.
+
+real 4,80
+user 0,12
+sys 0,06
+```
+
+The script execution time was measured as 4.80 seconds. This measurement includes user confirmation and must not be considered an end-to-end application recovery time.
+
+![Restore process and measured duration](docs/screenshots/40-backup-restore-timed.png)
+
+#### 6. VERIFY RESTORED DATA
+
+After restore, the `Backup Test` and `Employee1` records were visible again in the React interface.
+
+![Recovered records in the React interface](docs/screenshots/41-backup-ui-recovered.png)
+
+MongoDB queries also confirmed that the records were restored with the same field values:
+
+```text
+RESTORED BACKUP TEST RECORD:
+name: 'Backup Test'
+position: 'Backup Test'
+level: 'Junior'
+
+RESTORED EMPLOYEE1 RECORD:
+name: 'Employee1'
+position: 'Position1'
+level: 'Intern'
+
+TOTAL RECORDS:
+2
+```
+
+![Recovered records verified in MongoDB](docs/screenshots/42-backup-db-recovered.png)
+
+#### 7. POST-TEST SERVICE CHECK
+
+After the test, the `github-etl` CronJob was re-enabled. During the final check, backend and frontend were `1/1 Ready`, and the MongoDB Pod was `1/1 Running`. The MongoDB Pod restart count was zero.
+
+### 12.4 AUTOMATED BACKUP VERIFICATION
+
+`scripts/verify-backup.sh` verifies not only checksum integrity but also whether backup archives can be restored in an isolated MongoDB environment.
+
+The script performs the following actions:
+
+1. Checks archive files and SHA-256 checksums.
+2. Creates a temporary MongoDB 7 container in Docker with `--network none`.
+3. Restores both archives into this isolated environment.
+4. Checks that collections exist and are not empty.
+5. Reports the result as `PASS` or `FAIL`.
+6. Removes the temporary container after completion.
+
+```bash
+./scripts/verify-backup.sh backups/20261110T161624Z
+```
+
+A total of six documents were restored during the verification test:
+
+| Collection | Restored documents |
+| --- | ---: |
+| `sample_training.records` | 2 |
+| `sample_training.backup_restore_test` | 1 |
+| `github_etl.repositories` | 3 |
+| **Total** | **6** |
+
+```text
+PASS: Backup restored and verified successfully.
+Backup verification completed successfully.
+Cleaning up temporary MongoDB...
+```
+
+![Backup verification and successful restore](docs/screenshots/46-dr-backup-verification-and-success.png)
+
+![Isolation and temporary container cleanup](docs/screenshots/48-dr-isolation-cleanup.png)
+
+### 12.5 LIMITATIONS
+
+- Backups are started manually; no scheduled backup exists.
+- The target RPO is 24 hours, and the target RTO is 15 minutes. The current manual process does not automatically guarantee these targets.
+- The 4.80-second restore duration is only the script execution time and is not an end-to-end RTO measurement.
+- The retention target is seven days; automatic removal of older backups is not implemented.
+- Backup files are stored outside the cluster but on the same local computer. They do not provide independent off-site protection against disk loss.
+- Encrypted remote object storage, point-in-time recovery, and automated disaster recovery drills are not implemented.
+- `verify-backup.sh` checks that collections are not empty but does not compare document contents or application behavior.
+
+## 13. ROLLBACK, CLEANUP, AND SECURITY
+
+### 13.1 ROLLBACK LIMITATIONS
+
+After a deployment error, `deploy-local.sh` reapplies the image references recorded before deployment for backend, frontend, and ETL resources. The rollback flow and verified test evidence are available in **10.5 ROLLBACK**.
+
+Rollback restores only Kubernetes image references. It does not restore MongoDB data, collection contents, or schema changes.
+
+Automatic rollback is not triggered for an issue that appears after deployment completes successfully. In that case, identify the previous working commit SHA and run the script again with the previous image tag:
+
+```bash
+./scripts/deploy-local.sh sha-<previous-40-character-commit-hash>
+```
+
+Reverting the ETL CronJob image does not by itself confirm that the ETL is working correctly. The next ETL Job result must be checked separately.
+
+### 13.2 SAFE CLEANUP
+
+To remove the Docker Compose environment:
+
+```bash
+docker compose down
+```
+
+This command removes containers and networks while preserving the MongoDB volume.
+
+```bash
+docker compose down -v
+```
+
+This command also deletes the MongoDB volume. Do not use it when database data should be preserved.
+
+Deleting the `devops-case` namespace in Kubernetes can cause data loss for the MongoDB PVC and related resources. Take a backup before deleting the namespace or cluster.
+
+After a monitoring test, temporary Job and CronJob resources must be removed, the `monitoring-check` CronJob must be confirmed as not suspended, and active alert states must be checked. The `monitoring-state` ConfigMap must not be reset during normal operation.
+
+### 13.3 SECURITY APPROACH
+
+- Passwords, tokens, MongoDB URIs, and Slack webhook addresses are not added to the repository or container images.
+- Kubernetes Secrets store sensitive values, while ConfigMaps store non-sensitive configuration.
+- Backend and ETL use separate MongoDB users intended to access only their respective databases.
+- Backend, frontend, and ETL containers avoid unnecessary root privileges.
+- The monitoring component uses a read-only root filesystem and restricted Kubernetes ServiceAccount permissions.
+- The backend is accessible only inside the cluster through a `ClusterIP` Service, and MongoDB is accessible only through a headless Service. External access is provided only through the frontend NodePort Service.
+- Production dependency auditing runs in CI. Trivy scanning and SBOM generation are described in **9.6 CONTAINER IMAGE SECURITY SCANNING AND SBOM**.
+
+### 13.4 KNOWN SECURITY LIMITATIONS
+
+- CORS configuration is not restricted to a narrow allowlist.
+- Full schema-based input validation is not implemented for the API.
+- The cluster runs on a single node, and MongoDB has one replica.
+- Automatic Secret rotation is not implemented.
+- No NetworkPolicy is defined.
+- Image signing, policy as code, and vulnerability-based image publishing blocks are not implemented.
+
+These limitations belong to the local technical assessment environment. In a production environment, access policies, Secret management, network segmentation, high availability, and security policies must be implemented separately.
+
+## 14. COMMON ISSUES
+
+### FRONTEND OPENS BUT API REQUESTS FAIL
+
+- Confirm that the frontend uses the `/api` address.
+- Verify that the backend Pod is ready and that `/healthcheck/ready` returns HTTP 200.
+- Check the `case-backend` Service name in the Nginx configuration and the Service resource in the same namespace.
+- Check the k3d host port mapping or the `kubectl port-forward` command.
+
+### BACKEND IS NOT READY
+
+- Check MongoDB Pod and PVC status.
+- Review MongoDB logs.
+- Verify that the `backend-mongo-uri` Secret exists and that the backend user has the required permissions.
+- Evaluate `/healthcheck` and `/healthcheck/ready` separately. Liveness can succeed while readiness fails because MongoDB is unavailable.
+
+### POD IS IN `IMAGEPULLBACKOFF` STATE
+
+- Verify that local `case-*` images were imported into the k3d cluster.
+- If using a GHCR image, check that the required SHA tag exists and that the cluster can access the registry.
+- Inspect Pod events for detailed errors:
+
+```bash
+kubectl describe pod <pod-name> -n devops-case
+```
+
+### ETL IS NOT RUNNING
+
+- Verify that the `github-etl` CronJob has `suspend=false`.
+- Review the status and logs of recent Jobs.
+- Check the GitHub username, API request limit, and MongoDB connection.
+
+```bash
+kubectl get cronjob,jobs -n devops-case
+kubectl logs -n devops-case job/<etl-job-name>
+```
+
+### SLACK NOTIFICATIONS ARE NOT RECEIVED
+
+- Check the `monitoring-check` CronJob and recent monitoring Job logs.
+- Verify that the `monitoring-slack-webhook` Secret exists.
+- Check alert state and notification throttling time in the `monitoring-state` ConfigMap.
+- Compare `WEBHOOK_FAILED` and `WEBHOOK_SENT` logs. Do not log or share the webhook value.
+
+### BACKUP OR RESTORE FAILS
+
+- Verify that the `mongodb-0` Pod is ready.
+- Confirm that MongoDB users and connection Secrets are correctly configured.
+- Check that archive files and `SHA256SUMS` exist.
+- Remember that restore uses `--drop` and deletes existing data in target collections.
 
 ## 15. VERIFIED RESULTS AND KNOWN LIMITATIONS
 
-**The following outcomes were verified in earlier tests:**
+### VERIFIED RESULTS
 
-- Frontend, backend and MongoDB running with Docker Compose.
-- Create, read/list, update and delete operations through the frontend.
-- Both Cypress E2E tests passing (2/2).
-- Backend remaining alive during a MongoDB outage, readiness returning 503 and then returning to 200 after database recovery.
-- Frontend and backend Deployments reporting 1/1 ready on Kubernetes.
-- Hourly Kubernetes ETL CronJob executions and updates to existing repository records without duplicate inserts.
-- Periodic monitoring CronJob execution and evaluation of five alert types.
-- Initial Slack alerts, throttling and `RESOLVED` scenarios as well as backend and ETL failure/recovery tests.
-- All six ETL analysis module unit tests passing.
-- MongoDB backup and restore procedure tested in the local environment.
+| Area | Verified result |
+| --- | --- |
+| Docker Compose | Frontend, backend, and MongoDB services were started successfully. |
+| Web application | Create, read/list, update, and delete operations were validated through the interface. |
+| Cypress | Two E2E tests completed successfully. |
+| Readiness | During a MongoDB outage, readiness returned HTTP 503. When the database became available again, the backend returned to HTTP 200 without a restart. |
+| Kubernetes | Frontend and backend Deployment resources were verified as `1/1 Ready`. |
+| ETL | Hourly CronJob execution, initial data import, and duplicate-free updates using `github_id` were verified. |
+| Monitoring | Backend alerting, Slack notification, 15-minute throttling, and the `RESOLVED` notification were tested end to end. |
+| Backup and restore | Record creation, backup, collection deletion, data loss, restore, and validation of restored data were completed. |
+| Backup verification | Checksum validation and archive restore were completed successfully in an isolated MongoDB container. |
+| Advanced security | Trivy image scanning and CycloneDX SBOM generation were verified in CI. |
 
-These results describe earlier tests. The current state of a new installation must be verified independently.
+These results apply to the specified test environment and test time. In a new installation, the relevant commands should be run again to verify the current state.
 
-**Intentional scope boundaries:**
+### KNOWN LIMITATIONS
 
-- This environment is not a public cloud production service. It has been validated using local k3d.
-- MongoDB has one replica. Multi-node operation, a replica set and automatic failover have not been implemented.
-- Building container images in CI does not mean that Kubernetes deployment is automatic.
-- Helm/Kustomize, Terraform, Argo CD/Flux and HPA/PDB have not been implemented.
-- There are no Prometheus/Grafana dashboards or independent monitoring outside the cluster.
-- Full API input schema validation, a restricted CORS allowlist and automatic secret rotation have not been implemented.
-- MongoDB backup scripts are triggered manually. There is no automatic retention, encrypted remote storage or point-in-time recovery.
-
-Advanced criteria being considered for future work include advanced observability based on existing verified alert scenarios, advanced security through image vulnerability scanning or SBOM generation and advanced disaster recovery through automated or off-site backups. Planned features must not be described as implemented.
+- This environment is not a public cloud production service; it was validated on a local k3d cluster running on Docker Desktop.
+- MongoDB runs with a single replica. No replica set, automatic failover, or multi-node setup is available.
+- CI automates image creation, while Kubernetes deployment is started manually.
+- Helm/Kustomize, Terraform, Argo CD/Flux, and HPA/PDB are not implemented.
+- Prometheus/Grafana, centralized log collection, and external cluster availability monitoring are not available.
+- A narrow CORS allowlist, full API schema validation, NetworkPolicy, and automatic Secret rotation are not implemented.
+- Backups are started manually. Automatic retention cleanup, encrypted remote storage, and point-in-time recovery are not available.
+- Security scanning is intended for reporting; detected vulnerabilities do not automatically block image publishing.
 
 ## 16. ADDITIONAL DOCUMENTATION AND SUBMISSION EVIDENCE
 
-**Initial findings, applied changes and intentional scope boundaries:**
-
-`docs/findings.md`, `docs/findings_en.md`
-
-**Architecture diagram and detailed data/request flow:**
-
-`docs/architecture.md`
-
-**Backup/restore steps, retention and RPO/RTO values:**
-
-`docs/backup-restore.md`
-
-**Required screenshots of the running system:**
-
-`docs/screenshots/`, `TESLIM_KANITLARI.md`, `SUBMISSION_EVIDENCE.md`
-
-**Answers to final case questions:**
-
-`CASE_SONU_CEVAPLARI.md`, `CASE_END_ANSWERS.md` 
-
-**Original assessment documents:**
-
-`DevOps_Teknik_Case_TR.docx`, `DevOps_Technical_Case_EN.docx`
+- [Initial findings and applied improvements](docs/findings.md)
+- [English findings document](docs/findings_en.md)
+- [Architecture description](docs/architecture.md)
+- [Editable architecture diagram](docs/architecture.drawio)
+- [Backup and restore runbook](docs/backup-restore.md)
+- [Screenshots](docs/screenshots/)
+- [Turkish submission evidence](TESLIM_KANITLARI.md)
+- [English submission evidence](SUBMISSION_EVIDENCE.md)
+- [Turkish case answers](CASE_SONU_CEVAPLARI.md)
+- [English case answers](CASE_END_ANSWERS.md)
+- [Turkish assessment document](DevOps_Teknik_Case_TR.docx)
+- [English assessment document](DevOps_Technical_Case_EN.docx)

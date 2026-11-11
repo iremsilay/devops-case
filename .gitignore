@@ -15,3 +15,10 @@ coverage/
 !.env.example
 /kubernetes/secrets/
 /backups/
+.vscode/
+__pycache__/
+*.pyc
+repomix-output.xml
+config.env
+config.env.*
+repomix-output*.xml
