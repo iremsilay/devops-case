@@ -193,9 +193,17 @@ Her iki çalıştırmada da GitHub REST API'den 3 repository bilgisi alınmış,
 
 **Kanıtlar:**
 
-![11 - ETL çalıştırma ve MongoDB kayıtları](docs/screenshots/11-etl-first-import.png)
-![14 - Tekrarlı ETL çalıştırma ve upsert sonucu](docs/screenshots/14-etl-upsert-result.png)
-![15 - MongoDB unique index ve kayıt sayısı](docs/screenshots/15-etl-unique-index.png)
+**11 - ETL çalıştırma ve MongoDB kayıtları**
+
+![ETL çalıştırma](docs/screenshots/11-etl-first-import.png)
+
+**14 - Tekrarlı ETL çalıştırma ve upsert sonucu**
+
+![ETL upsert sonucu](docs/screenshots/14-etl-upsert-result.png)
+
+**15 - MongoDB unique index ve kayıt sayısı**
+
+![MongoDB unique index](docs/screenshots/15-etl-unique-index.png)
 
 ### 6.6 Temizlik
 
